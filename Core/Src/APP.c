@@ -187,7 +187,11 @@ uint8_t ble_module_config_is_done(void) {
 
 
 void dbc_decode(){
-	switch(can_rx_data.can_rx_header.StdId){
+	uint32_t can_id = (can_rx_data.can_rx_header.IDE == CAN_ID_EXT)
+			? can_rx_data.can_rx_header.ExtId
+			: can_rx_data.can_rx_header.StdId;
+
+	switch(can_id){
 	case AUTONOMOUS_T26_AQT7_FRAME_ID:
 		struct autonomous_t26_aqt7_t rear_dynamics;
 		autonomous_t26_aqt7_unpack(&rear_dynamics, can_rx_data.tx_data, AUTONOMOUS_T26_AQT7_LENGTH);
@@ -256,7 +260,7 @@ void dbc_decode(){
 		case AUTONOMOUS_T26_CUBE_MARS_FEEDBACK_FRAME_ID:
 			t24.DIR_ACTUATOR_LAST_TX = HAL_GetTick();
 			break;
-		case AUTONOMOUS_T26_RES_FRAME_ID:
+		case 0x18b:
 			t24.RES_LAST_TX = HAL_GetTick();
 			break;
 	default:

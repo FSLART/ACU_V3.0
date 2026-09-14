@@ -18,9 +18,9 @@ extern cant_acu_state_t ACU_STATE;
 #define SOLENOID_MIN_DELAY_MS  3000
 #define EBS_MIN_BAR 5.0f
 #define EBS_MAX_BAR 10.0f
-#define EBS_FRONT_HYD_GAIN 12.0f // TODO METER A 9.5 DEPOIS
-#define EBS_REAR_HYD_GAIN_INITIAL 11.5f
-#define EBS_REAR_HYD_GAIN_FINAL 11.5f
+#define EBS_FRONT_HYD_GAIN 9.82f 
+#define EBS_REAR_HYD_GAIN_INITIAL 8.5f
+#define EBS_REAR_HYD_GAIN_FINAL 8.5f
 #define EBS_HYD_UNLOADED_BAR 5.5f //TODO FOI ALTERADO PARA NAO DAR MERDA
 
 #define IN_RANGE(val, min, max) ((val) > (min) && (val) < (max))
