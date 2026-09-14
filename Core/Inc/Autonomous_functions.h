@@ -21,6 +21,17 @@
 #define SKIP_PRESSURE_REAR_CHECK  0
 #define SKIP_PRESSURE_CHECK2  0
 
+// TEST BENCH BYPASS: the front hydraulic circuit bleeds down within ~2s of being
+// locked (rear_solenoid==0), so the real CAN reading can't hold long enough to test
+// the rest of the pipeline. When enabled, dbc_decode() ignores the CAN value and
+// synthesizes a loaded/unloaded reading from rear_solenoid (see APP.c). Set to 0 to
+// use the real sensor.
+#define BYPASS_FRONT_HYD_PRESSURE         0
+#define BYPASS_REAR_HYD_PRESSURE          0
+
+#define BYPASS_FRONT_HYD_PRESSURE_LOADED   150.0f
+#define BYPASS_FRONT_HYD_PRESSURE_UNLOADED 0.0f
+
 #define MAX_TIMEOUT 1000
 
 extern Main_state_machine_t Vehicle_state_machine;

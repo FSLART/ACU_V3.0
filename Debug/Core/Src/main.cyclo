@@ -3,7 +3,7 @@
 ../Core/Src/main.c:217:6:HAL_ADC_ConvCpltCallback	2
 ../Core/Src/main.c:232:7:GetTemperature	2
 ../Core/Src/main.c:258:6:HAL_TIM_PeriodElapsedCallback	13
-../Core/Src/main.c:343:6:HAL_CAN_RxFifo0MsgPendingCallback	2
-../Core/Src/main.c:353:6:HAL_GPIO_EXTI_Callback	4
-../Core/Src/main.c:362:6:HAL_UARTEx_RxEventCallback	10
-../Core/Src/main.c:388:6:Error_Handler	1
+../Core/Src/main.c:349:6:HAL_CAN_RxFifo0MsgPendingCallback	2
+../Core/Src/main.c:359:6:HAL_GPIO_EXTI_Callback	4
+../Core/Src/main.c:368:6:HAL_UARTEx_RxEventCallback	10
+../Core/Src/main.c:394:6:Error_Handler	1

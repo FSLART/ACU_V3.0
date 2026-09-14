@@ -169,6 +169,7 @@ struct car {
 	uint8_t rear_solenoid;
 	uint8_t Ignition_Status;			// 0 - OFF, 1 - ON     (Real from VCU)
 	uint8_t Ignition_Request;		// 0 - OFF, 1 - ON		(Request from ACU)
+	uint8_t Ignition_enable;
 	uint8_t ASMS;								// 0 - OFF, 1 - ON
 	uint8_t Emergency;							// 0 - No , 1 - Emergency
 	uint8_t Res;					// 0 - Not active, 1 - ON , 2 - Emergency

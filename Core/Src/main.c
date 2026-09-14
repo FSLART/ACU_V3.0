@@ -216,8 +216,8 @@ void SystemClock_Config(void)
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	if (hadc->Instance == ADC1) {
-		float raw_voltage_front = (ADC_Samples[0] * 3.3 / 4096) / 0.66;
-		float raw_voltage_rear = (ADC_Samples[1] * 3.3 / 4096) / 0.66;
+		float raw_voltage_front = (ADC_Samples[1] * 3.3 / 4096) / 0.66;
+		float raw_voltage_rear = (ADC_Samples[0] * 3.3 / 4096) / 0.66;
 		t24.chip_temp = GetTemperature(ADC_Samples[2], ADC_Samples[3]);
 
 		float front_pressure = (raw_voltage_front - 0.5) / 0.4;
@@ -268,6 +268,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		/* Rising-edge toggle: each press flips Ignition_Request */
 		if (t24.ignition_pin_state == 1 && t24.prev_ign_pin_state == 0) {
 			t24.Ignition_Request = !t24.Ignition_Request;
+			t24.Ignition_Request &= t24.Ignition_enable;
 		}
 		t24.prev_ign_pin_state = t24.ignition_pin_state;
 		AS_data.ign = t24.Ignition_Request;
