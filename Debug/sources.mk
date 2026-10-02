@@ -38,6 +38,7 @@ CPP_DEPS :=
 
 # Every subdirectory with source files must be described here
 SUBDIRS := \
+Core/DBC \
 Core/Inc \
 Core/Src \
 Core/Startup \

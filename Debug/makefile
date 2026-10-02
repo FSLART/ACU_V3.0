@@ -14,6 +14,7 @@ RM := rm -rf
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
 -include Core/Inc/subdir.mk
+-include Core/DBC/subdir.mk
 -include objects.mk
 
 ifneq ($(MAKECMDGOALS),clean)
@@ -86,8 +87,8 @@ all: main-build
 main-build: ACU_V3.0.elf secondary-outputs
 
 # Tool invocations
-ACU_V3.0.elf ACU_V3.0.map: $(OBJS) $(USER_OBJS) C:\Users\jpser\Documents\GitHub\ACU_V3.0\STM32F412RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-g++ -o "ACU_V3.0.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\jpser\Documents\GitHub\ACU_V3.0\STM32F412RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="ACU_V3.0.map" -Wl,--gc-sections -static -u_printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+ACU_V3.0.elf ACU_V3.0.map: $(OBJS) $(USER_OBJS) /home/sintra/dev/ACU_V3.0/STM32F412RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-g++ -o "ACU_V3.0.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/sintra/dev/ACU_V3.0/STM32F412RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="ACU_V3.0.map" -Wl,--gc-sections -static -u_printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
