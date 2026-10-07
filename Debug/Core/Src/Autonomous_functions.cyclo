@@ -1,6 +1,0 @@
-../Core/Src/Autonomous_functions.c:32:6:initial_sequence	30
-../Core/Src/Autonomous_functions.c:171:6:continuous_monitoring	15
-../Core/Src/Autonomous_functions.c:229:5:ASSI_control	8
-../Core/Src/Autonomous_functions.c:284:6:check_timeout	2
-../Core/Src/Autonomous_functions.c:291:9:module_timeout	4
-../Core/Src/Autonomous_functions.c:307:10:emergency_blame	1

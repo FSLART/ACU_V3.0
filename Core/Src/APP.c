@@ -44,6 +44,77 @@ static uint8_t      ble_cfg_state = 0;
 static uint8_t      ble_cfg_index = 0;
 static uint32_t     ble_cfg_tick  = 0;
 
+#ifdef DEBUG
+/* bxCAN ESR.LEC: last bus error seen. ACK = nobody else on the bus at this bit rate. */
+typedef enum {
+	CAN_LEC_OK, CAN_LEC_STUFF, CAN_LEC_FORM, CAN_LEC_ACK,
+	CAN_LEC_BIT_RECESSIVE, CAN_LEC_BIT_DOMINANT, CAN_LEC_CRC, CAN_LEC_SW
+} can_lec_t;
+
+/* Add `acu_dbg` to Live Expressions. Refreshed every app() loop, Debug build only. */
+typedef struct {
+	uint32_t uptime_ms;
+	uint32_t loop_count;
+
+	Main_state_machine_t vehicle_state;
+	cant_acu_state_t acu_state;
+	Autonomous_System_states_t as_state;
+	startup_sequence_state_t startup_seq;
+	Emergency_cause_t emergency_cause;
+
+	struct car car;
+	uint32_t adc_raw[4];
+
+	uint32_t age_vcu_ms, age_jetson_ms, age_rear_press_ms, age_dir_ms, age_res_ms;
+
+	uint8_t can_tec, can_rec;
+	can_lec_t can_last_error;
+	uint8_t can_error_passive, can_bus_off;
+	uint32_t can_hal_error;
+	uint32_t can_rx_pending, can_tx_pending;
+
+	uint8_t ble_cfg_state;
+	uint8_t mission_selector_enable;
+} acu_debug_t;
+
+acu_debug_t acu_dbg;
+
+static void debug_snapshot(void) {
+	uint32_t now = HAL_GetTick();
+	uint32_t esr = hcan1.Instance->ESR;
+
+	acu_dbg.uptime_ms = now;
+	acu_dbg.loop_count++;
+
+	acu_dbg.vehicle_state = Vehicle_state_machine;
+	acu_dbg.acu_state = ACU_STATE;
+	acu_dbg.as_state = Autonomous_state;
+	acu_dbg.startup_seq = startup_sequence_state;
+	acu_dbg.emergency_cause = Emergency_cause;
+
+	acu_dbg.car = t24;
+	memcpy(acu_dbg.adc_raw, ADC_Samples, sizeof(acu_dbg.adc_raw));
+
+	acu_dbg.age_vcu_ms = now - t24.VCU_LAST_TX;
+	acu_dbg.age_jetson_ms = now - t24.JETSON_LAST_TX;
+	acu_dbg.age_rear_press_ms = now - t24.REAR_PRESSURE_LAST_TX;
+	acu_dbg.age_dir_ms = now - t24.DIR_ACTUATOR_LAST_TX;
+	acu_dbg.age_res_ms = now - t24.RES_LAST_TX;
+
+	acu_dbg.can_tec = (esr & CAN_ESR_TEC_Msk) >> CAN_ESR_TEC_Pos;
+	acu_dbg.can_rec = (esr & CAN_ESR_REC_Msk) >> CAN_ESR_REC_Pos;
+	acu_dbg.can_last_error = (can_lec_t)((esr & CAN_ESR_LEC_Msk) >> CAN_ESR_LEC_Pos);
+	acu_dbg.can_error_passive = (esr & CAN_ESR_EPVF) != 0;
+	acu_dbg.can_bus_off = (esr & CAN_ESR_BOFF) != 0;
+	acu_dbg.can_hal_error = hcan1.ErrorCode;
+	acu_dbg.can_rx_pending = can_rx_ringbuffer.counter;
+	acu_dbg.can_tx_pending = can_tx_ringbuffer.counter;
+
+	acu_dbg.ble_cfg_state = ble_cfg_state;
+	acu_dbg.mission_selector_enable = mission_selector_enable;
+}
+#endif
+
 
 void app_init() {
 
@@ -121,6 +192,9 @@ void app() {
 	handle_can_tx();
 	can_buffer_pop(&can_rx_ringbuffer, 0,&can_rx_data);
 	dbc_decode();
+#ifdef DEBUG
+	debug_snapshot();
+#endif
 	/*if(t24.Autonomous_State == AS_STATE_EMERGENCY){
 		t24.Emergency = 1;
 	}*/

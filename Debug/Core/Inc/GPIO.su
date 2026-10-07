@@ -1,6 +1,0 @@
-../Core/Inc/GPIO.cpp:10:1:GPIO::GPIO(GPIO_TypeDef*, uint16_t)	24	static
-../Core/Inc/GPIO.cpp:12:6:void GPIO::initOutput(uint32_t, uint32_t)	48	static
-../Core/Inc/GPIO.cpp:23:6:void GPIO::initInput(uint32_t)	40	static
-../Core/Inc/GPIO.cpp:33:6:void GPIO::write(GPIO_PinState)	16	static
-../Core/Inc/GPIO.cpp:37:6:void GPIO::toggle()	16	static
-../Core/Inc/GPIO.cpp:41:6:bool GPIO::read() const	16	static
