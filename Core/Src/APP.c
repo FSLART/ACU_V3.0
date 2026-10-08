@@ -45,12 +45,6 @@ static uint8_t      ble_cfg_index = 0;
 static uint32_t     ble_cfg_tick  = 0;
 
 #ifdef DEBUG
-/* bxCAN ESR.LEC: last bus error seen. ACK = nobody else on the bus at this bit rate. */
-typedef enum {
-	CAN_LEC_OK, CAN_LEC_STUFF, CAN_LEC_FORM, CAN_LEC_ACK,
-	CAN_LEC_BIT_RECESSIVE, CAN_LEC_BIT_DOMINANT, CAN_LEC_CRC, CAN_LEC_SW
-} can_lec_t;
-
 /* Add `acu_dbg` to Live Expressions. Refreshed every app() loop, Debug build only. */
 typedef struct {
 	uint32_t uptime_ms;
@@ -67,11 +61,8 @@ typedef struct {
 
 	uint32_t age_vcu_ms, age_jetson_ms, age_rear_press_ms, age_dir_ms, age_res_ms;
 
-	uint8_t can_tec, can_rec;
-	can_lec_t can_last_error;
-	uint8_t can_error_passive, can_bus_off;
-	uint32_t can_hal_error;
-	uint32_t can_rx_pending, can_tx_pending;
+	CAN_BusStatus can;
+	uint32_t can_rx_pending;
 
 	uint8_t ble_cfg_state;
 	uint8_t mission_selector_enable;
@@ -81,7 +72,6 @@ acu_debug_t acu_dbg;
 
 static void debug_snapshot(void) {
 	uint32_t now = HAL_GetTick();
-	uint32_t esr = hcan1.Instance->ESR;
 
 	acu_dbg.uptime_ms = now;
 	acu_dbg.loop_count++;
@@ -101,14 +91,8 @@ static void debug_snapshot(void) {
 	acu_dbg.age_dir_ms = now - t24.DIR_ACTUATOR_LAST_TX;
 	acu_dbg.age_res_ms = now - t24.RES_LAST_TX;
 
-	acu_dbg.can_tec = (esr & CAN_ESR_TEC_Msk) >> CAN_ESR_TEC_Pos;
-	acu_dbg.can_rec = (esr & CAN_ESR_REC_Msk) >> CAN_ESR_REC_Pos;
-	acu_dbg.can_last_error = (can_lec_t)((esr & CAN_ESR_LEC_Msk) >> CAN_ESR_LEC_Pos);
-	acu_dbg.can_error_passive = (esr & CAN_ESR_EPVF) != 0;
-	acu_dbg.can_bus_off = (esr & CAN_ESR_BOFF) != 0;
-	acu_dbg.can_hal_error = hcan1.ErrorCode;
+	acu_dbg.can = can1_status;
 	acu_dbg.can_rx_pending = can_rx_ringbuffer.counter;
-	acu_dbg.can_tx_pending = can_tx_ringbuffer.counter;
 
 	acu_dbg.ble_cfg_state = ble_cfg_state;
 	acu_dbg.mission_selector_enable = mission_selector_enable;
@@ -152,22 +136,7 @@ void app_init() {
 	HAL_TIM_Base_Start(&htim8);
 	HAL_TIM_Base_Start_IT(&htim2);
 
-
-	CAN_FilterTypeDef can_filter;
-
-	can_filter.FilterBank = 0;
-	can_filter.FilterMode = CAN_FILTERMODE_IDMASK;
-	can_filter.FilterScale = CAN_FILTERSCALE_32BIT;
-	can_filter.FilterIdHigh = 0x0000;
-	can_filter.FilterIdLow = 0x0000;
-	can_filter.FilterMaskIdHigh = 0x0000;
-	can_filter.FilterMaskIdLow = 0x0000;
-	can_filter.FilterFIFOAssignment = CAN_RX_FIFO0;
-	can_filter.FilterActivation = ENABLE;
-
-	HAL_CAN_ConfigFilter(&hcan1, &can_filter);
-	HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-	HAL_CAN_Start(&hcan1);
+	/* CAN filters + start: CAN_Config() in MX_CAN1_Init() */
 
 	extern volatile uint8_t rx_buffer[RX_BUFFER_SIZE];
 
@@ -189,9 +158,18 @@ void app() {
 	LED_indicator_controller();
 	ASSI_leds_control_signal = ASSI_control(ASSI_leds_control_signal, t24.Autonomous_State);
 	Peripheral_actuation();
-	handle_can_tx();
-	can_buffer_pop(&can_rx_ringbuffer, 0,&can_rx_data);
-	dbc_decode();
+
+	static uint32_t tick_10ms = 0;
+	if (HAL_GetTick() - tick_10ms >= 10) {
+		tick_10ms = HAL_GetTick();
+		CAN_Service(&hcan1);
+		IWDG->KR = 0xAAAA;   /* IWDG reload: only here, so a stuck main loop resets the board */
+	}
+
+	/* Decode only a freshly popped frame: re-decoding the last one would keep refreshing its *_LAST_TX timeout */
+	if (can_buffer_pop(&can_rx_ringbuffer, 0, &can_rx_data)) {
+		dbc_decode();
+	}
 #ifdef DEBUG
 	debug_snapshot();
 #endif
@@ -270,8 +248,8 @@ void dbc_decode(){
 		struct autonomous_t26_aqt7_t rear_dynamics;
 		autonomous_t26_aqt7_unpack(&rear_dynamics, can_rx_data.tx_data, AUTONOMOUS_T26_AQT7_LENGTH);
 		//t24.Rear_Pressure.Hydraulic = autonomous_t26_aqt7_rear_brk_press_decode(rear_dynamics.rear_brk_press);
-		t24.REAR_PRESSURE_LAST_TX = can_rx_ringbuffer.queue[can_rx_ringbuffer.tail].arrival_time;
-		
+		t24.REAR_PRESSURE_LAST_TX = can_rx_data.arrival_time;
+
 		#if BYPASS_REAR_HYD_PRESSURE
 			// TEST BYPASS: ignore the CAN reading, synthesize a value consistent with
 			// rear_solenoid (which physically locks/releases the front line) instead.

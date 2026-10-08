@@ -25,9 +25,6 @@ extern UART_HandleTypeDef huart2;
 uint32_t millis();
 void Peripheral_aquisition(uint8_t *assi_leds);
 void Peripheral_actuation();
-void handle_can_tx();
-void add_can_message(uint32_t mailbox, CAN_TxHeaderTypeDef tx_header,
-		uint8_t tx_data[8]);
 void handle_uart_logs();
 void LED_indicator_controller();
 #endif

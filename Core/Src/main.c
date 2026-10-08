@@ -69,7 +69,6 @@ struct ring can_rx_ringbuffer;
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-uint32_t TX_MAILBOX;
 uint8_t tx_data[8];
 
 ema_data_structure ema_rear_pressure;
@@ -84,8 +83,6 @@ extern uint8_t activate_res;
 
 /* USER CODE BEGIN PV */
 
-struct can_queue can_tx_queue[64];
-int can_queue_index = -1;
 uint8_t mission_selector_enable = 0;
 EE24_HandleTypeDef hee24;
 
@@ -98,6 +95,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
 float GetTemperature(uint16_t raw_temp, uint16_t raw_vref);
+static void IWDG_Start(void);
 
 /* USER CODE END PFP */
 
@@ -150,6 +148,7 @@ int main(void)
 	ema_init(&ema_front_pressure, 0.5f);
 	ema_init(&ema_rear_pressure, 0.5f);
 	app_init();
+	IWDG_Start();
 
   /* USER CODE END 2 */
 
@@ -258,6 +257,18 @@ float GetTemperature(uint16_t raw_temp, uint16_t raw_vref) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM2) {
 
+		/* One-shot command: goes first so the periodic frames can't take all 3 mailboxes, and is retried next tick if it still didn't fit */
+		if (activate_res){
+			can_tx_header.StdId = 0x00;
+			can_tx_header.RTR = CAN_RTR_DATA;
+			can_tx_header.DLC = 2;
+			tx_data[0] = 1;
+			tx_data[1] = 0;
+			if (CAN_Send(&hcan1, &can_tx_header, tx_data) == HAL_OK) {
+				activate_res = 0;
+			}
+		}
+
 		struct autonomous_t26_acu_t AS_data;
 
 		AS_data.acu_cpu_temp = t24.chip_temp;
@@ -282,7 +293,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		can_tx_header.RTR = CAN_RTR_DATA;
 		can_tx_header.DLC = AUTONOMOUS_T26_ACU_LENGTH;
 
-		add_can_message(TX_MAILBOX, can_tx_header, tx_data);
+		CAN_Send(&hcan1, &can_tx_header, tx_data);
 
 		struct autonomous_t26_dv_status_t dv_data;
 
@@ -295,7 +306,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		can_tx_header.StdId = AUTONOMOUS_T26_DV_STATUS_FRAME_ID;
 		can_tx_header.RTR = CAN_RTR_DATA;
 		can_tx_header.DLC = AUTONOMOUS_T26_DV_STATUS_LENGTH;
-		add_can_message(TX_MAILBOX, can_tx_header, tx_data);
+		CAN_Send(&hcan1, &can_tx_header, tx_data);
 
 		struct autonomous_t26_asf_signals_t asf_signals;
 		asf_signals.brake_pressure_front = t24.Front_Pressure.Hydraulic * 10;
@@ -307,17 +318,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		can_tx_header.RTR = CAN_RTR_DATA;
 		can_tx_header.DLC = AUTONOMOUS_T26_ASF_SIGNALS_LENGTH;
 
-		add_can_message(TX_MAILBOX, can_tx_header, tx_data);
-
-		if (activate_res){
-			can_tx_header.StdId = 0x00;
-			can_tx_header.RTR = CAN_RTR_DATA;
-			can_tx_header.DLC = 2;
-			tx_data[0] = 1;
-			tx_data[1] = 0;
-			add_can_message(TX_MAILBOX, can_tx_header, tx_data);
-			activate_res = 0;
-		}
+		CAN_Send(&hcan1, &can_tx_header, tx_data);
 
 		/* ── BLE telemetry: 15-byte binary packet via ble_handler ── */
 		if (!ble_module_config_is_done()) {
@@ -350,10 +351,27 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	CAN_RxHeaderTypeDef rx_header;
 	uint8_t rx_data[8];
 
-	if (HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK) {
-		can_rx_buffer_push(&can_rx_ringbuffer, rx_header, rx_data);
+	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data) != HAL_OK) {
+		/* Drop it: a frame left in the FIFO re-fires this interrupt forever */
+		SET_BIT(hcan->Instance->RF0R, CAN_RF0R_RFOM0);
+		return;
 	}
+	/* ID and IDE are checked in dbc_decode() */
+	can_rx_buffer_push(&can_rx_ringbuffer, rx_header, rx_data);
+}
 
+/* Last safety net: ~2 s (LSI 32 kHz / 64 * 1000), refreshed only in app()'s 10 ms slot.
+ * Register access because the HAL IWDG module is not enabled in this project. */
+static void IWDG_Start(void) {
+	__HAL_DBGMCU_FREEZE_IWDG();   /* don't reset the board while halted at a breakpoint */
+	IWDG->KR = 0xCCCC;            /* start, forces LSI on */
+	IWDG->KR = 0x5555;            /* unlock PR and RLR */
+	IWDG->PR = IWDG_PR_PR_2;      /* /64 */
+	IWDG->RLR = 1000;
+	uint32_t t0 = HAL_GetTick();
+	while (IWDG->SR != 0 && HAL_GetTick() - t0 < 10) {
+	}
+	IWDG->KR = 0xAAAA;            /* reload */
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {

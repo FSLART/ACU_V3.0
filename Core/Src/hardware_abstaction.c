@@ -8,11 +8,8 @@
 
 #include "hardware_abstraction.h"
 
-extern int can_queue_index;
-extern struct can_queue can_tx_queue[64];
 static uint8_t UART_TxBuffer[512];
 
-extern uint32_t TX_MAILBOX;
 extern CAN_TxHeaderTypeDef can_tx_header;
 extern uint8_t tx_data[8];
 
@@ -63,33 +60,6 @@ void Peripheral_actuation() {
 }
 
 
-
-
-void handle_can_tx() {
-	static uint8_t tx_index = 0;
-	if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0 && can_queue_index > -1) {
-		HAL_CAN_AddTxMessage(&hcan1, &can_tx_queue[tx_index].can_tx_header,
-				can_tx_queue[tx_index].tx_data,
-				&can_tx_queue[tx_index].TX_MAILBOX);
-		tx_index++;
-		if (can_queue_index == (tx_index - 1)) {
-			can_queue_index = -1;
-			tx_index = 0;
-		}
-	}
-
-}
-
-void add_can_message(uint32_t mailbox, CAN_TxHeaderTypeDef tx_header,
-		uint8_t tx_data[8]) {
-	if (can_queue_index >= 63) {
-		return;  /* queue full, drop message */
-	}
-	can_queue_index++;
-	can_tx_queue[can_queue_index].TX_MAILBOX = mailbox;
-	can_tx_queue[can_queue_index].can_tx_header = tx_header;
-	memcpy(can_tx_queue[can_queue_index].tx_data, tx_data, 8);
-}
 
 
 void handle_uart_logs() {

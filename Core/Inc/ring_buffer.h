@@ -28,6 +28,6 @@ void can_buffer_push(struct ring *ring_buffer, CAN_TxHeaderTypeDef tx_header,
 		uint8_t data[8]);
 void can_rx_buffer_push(struct ring *ring_buffer, CAN_RxHeaderTypeDef tx_header,
 		uint8_t data[8]);
-void can_buffer_pop(struct ring *ring_buffer, uint8_t tx_or_rx,struct can_queue *can_rx);
+uint8_t can_buffer_pop(struct ring *ring_buffer, uint8_t tx_or_rx,struct can_queue *can_rx);
 
 #endif /* INC_RING_BUFFER_H_ */
