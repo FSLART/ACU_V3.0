@@ -39,6 +39,16 @@ extern struct ring can_rx_ringbuffer;
 extern Emergency_cause_t Emergency_cause;
 extern struct car t24;
 
+/* Snapshot taken when the startup sequence falls into SEQUENCE_ERROR (diagnostics only). */
+typedef struct {
+	startup_sequence_state_t step;      /* step that failed */
+	uint32_t ms;                        /* uptime when it failed */
+	struct pressure front, rear;
+	uint8_t front_solenoid, rear_solenoid, sdc_feedback;
+	uint32_t count;
+} seq_failure_t;
+extern seq_failure_t seq_fail;
+
 void initial_sequence(struct car *v, startup_sequence_state_t *seq_status, Main_state_machine_t *Vehicle_state_machine);
 void continuous_monitoring(uint8_t sdc_status, float Rear_pneumatic, float Front_pneumatic, float Rear_hydraulic,
 		float Front_hydraulic);

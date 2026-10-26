@@ -17,10 +17,14 @@ extern cant_acu_state_t ACU_STATE;
 // #define TIMEOUT_HV_MS          5000
 #define SOLENOID_MIN_DELAY_MS  3000
 #define EBS_MIN_BAR 5.0f
+#define EBS_REAR_MIN_BAR 2.5f
 #define EBS_MAX_BAR 10.0f
-#define EBS_FRONT_HYD_GAIN 9.82f 
-#define EBS_REAR_HYD_GAIN_INITIAL 8.5f
-#define EBS_REAR_HYD_GAIN_FINAL 8.5f
+/* Calibrated with EBS applied after the brake balance was moved for regen:
+ * front 72.3 bar hyd / 7.66 bar pneu = 9.4x, rear 24.2 / 3.36 = 7.2x.
+ * Gains ~80% of the measured ratio; re-measure if the brake balance changes again. */
+#define EBS_FRONT_HYD_GAIN 7.5f
+#define EBS_REAR_HYD_GAIN_INITIAL 5.8f
+#define EBS_REAR_HYD_GAIN_FINAL 5.8f
 #define EBS_HYD_UNLOADED_BAR 5.5f //TODO FOI ALTERADO PARA NAO DAR MERDA
 
 #define IN_RANGE(val, min, max) ((val) > (min) && (val) < (max))
@@ -28,9 +32,12 @@ extern cant_acu_state_t ACU_STATE;
 #define IS_UNLOADED(hyd) ((hyd) <= EBS_HYD_UNLOADED_BAR)
 
 static uint32_t state_timer = 0;
+seq_failure_t seq_fail;
 
 void initial_sequence(struct car *t24, startup_sequence_state_t *seq_status,
 		Main_state_machine_t *Vehicle_state_machine) {
+	startup_sequence_state_t step = *seq_status;
+
 	switch (*seq_status) {
 	case WDT_TOGGLE_CHECK:
 		ACU_STATE = INIT_SEQUENCE;
@@ -63,7 +70,7 @@ void initial_sequence(struct car *t24, startup_sequence_state_t *seq_status,
 			break;
 #endif
 		if (IN_RANGE(t24->Front_Pressure.Pneumatic, EBS_MIN_BAR,
-				EBS_MAX_BAR) && IN_RANGE(t24->Rear_Pressure.Pneumatic, 4, EBS_MAX_BAR)) {
+				EBS_MAX_BAR) && IN_RANGE(t24->Rear_Pressure.Pneumatic, EBS_REAR_MIN_BAR, EBS_MAX_BAR)) {
 			*seq_status = PRESSURE_CHECK1;
 		} else {
 			*seq_status = SEQUENCE_ERROR;
@@ -167,6 +174,18 @@ void initial_sequence(struct car *t24, startup_sequence_state_t *seq_status,
 		*seq_status = SEQUENCE_ERROR;
 		break;
 	}
+
+	if (*seq_status == SEQUENCE_ERROR && step != SEQUENCE_ERROR) {
+		seq_fail.step = step;
+		seq_fail.ms = millis();
+		seq_fail.front = t24->Front_Pressure;
+		seq_fail.rear = t24->Rear_Pressure;
+		seq_fail.front_solenoid = t24->front_solenoid;
+		seq_fail.rear_solenoid = t24->rear_solenoid;
+		seq_fail.sdc_feedback = t24->SDC_feedback;
+		seq_fail.count++;
+		Emergency_cause = (step == WDT_STP_TOGGLE_CHECK) ? SDC_OPEN : Pressure_checks;
+	}
 }
 void continuous_monitoring(uint8_t sdc_status, float Rear_pneumatic,
 		float Front_pneumatic, float Rear_hydraulic, float Front_hydraulic) {
@@ -183,6 +202,7 @@ void continuous_monitoring(uint8_t sdc_status, float Rear_pneumatic,
 
 	if (sdc_status == 0) {
 		Vehicle_state_machine = EMERGENCY;
+		Emergency_cause = SDC_OPEN;
 		return;
 	}
 	uint8_t res = module_timeout();
@@ -211,17 +231,21 @@ void continuous_monitoring(uint8_t sdc_status, float Rear_pneumatic,
 		return;
 	}
 
-	if (!IN_RANGE(Rear_pneumatic, 4,
+	if (!IN_RANGE(Rear_pneumatic, EBS_REAR_MIN_BAR,
 			EBS_MAX_BAR) || !IN_RANGE(Front_pneumatic, EBS_MIN_BAR, EBS_MAX_BAR)) {
 		Vehicle_state_machine = EMERGENCY;
+		Emergency_cause = Pressure_checks;
 		return;
 	}
 
+	/* Brakes are released while driving, and still are on the tick the Jetson reports FINISHED */
 	if ((!IS_CORRELATED(Front_hydraulic, Front_pneumatic, EBS_FRONT_HYD_GAIN)
 			|| !IS_CORRELATED(Rear_hydraulic, Rear_pneumatic,
 					EBS_REAR_HYD_GAIN_FINAL))
-			&& t24.Autonomous_State != AS_STATE_DRIVING) {
+			&& t24.Autonomous_State != AS_STATE_DRIVING
+			&& t24.Autonomous_State != AS_STATE_FINISHED) {
 		Vehicle_state_machine = EMERGENCY;
+		Emergency_cause = Pressure_checks;
 		return;
 	}
 }

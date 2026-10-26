@@ -55,6 +55,7 @@ typedef struct {
 	Autonomous_System_states_t as_state;
 	startup_sequence_state_t startup_seq;
 	Emergency_cause_t emergency_cause;
+	seq_failure_t seq_fail;
 
 	struct car car;
 	uint32_t adc_raw[4];
@@ -92,6 +93,7 @@ static void debug_snapshot(void) {
 	acu_dbg.age_res_ms = now - t24.RES_LAST_TX;
 
 	acu_dbg.can = can1_status;
+	acu_dbg.seq_fail = seq_fail;
 	acu_dbg.can_rx_pending = can_rx_ringbuffer.counter;
 
 	acu_dbg.ble_cfg_state = ble_cfg_state;
