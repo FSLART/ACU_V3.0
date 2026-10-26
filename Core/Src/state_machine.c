@@ -9,6 +9,10 @@ static uint8_t ready_timer_active = 0;
 uint8_t activate_res = 0;
 extern cant_acu_state_t ACU_STATE;
 uint32_t pressure_recovery_time = 0;
+static uint32_t finish_tick = 0;
+
+/* AS Finished: the VCU must confirm HV off within this time, or the ACU opens the SDC. */
+#define FINISH_HV_OFF_TIMEOUT_MS 1000
 
 void Handle_autonomous_state() {
 	switch (Autonomous_state) {
@@ -29,6 +33,11 @@ void Handle_autonomous_state() {
 		}
 		break;
 	case Monitor_sequence:
+		if (t24.Autonomous_State == AS_STATE_EMERGENCY) {
+			Emergency_cause = UNKOWN;
+			Vehicle_state_machine = EMERGENCY;
+			break;
+		}
 		if (t24.Autonomous_State == AS_STATE_DRIVING) {
 			ACU_STATE = DRIVING;
 			t24.front_solenoid = 1;
@@ -54,21 +63,22 @@ void Handle_autonomous_state() {
 		if (t24.Autonomous_State == AS_STATE_FINISHED) {
 			Autonomous_state = Finish;
 			ACU_STATE = FINISHED;
+			finish_tick = millis();
 		}
 		break;
 	case Finish:
-		/***
-		 * Ensure car stoped safely
-		 */
-		if (t24.rpm <= 10) {
-			if (t24.ASMS == 0) {
-				t24.ASSI_state = AS_STATE_FINISHED;
-				t24.front_solenoid = 0;
-				t24.rear_solenoid = 0;
-				if (!t24.ASMS) {
-					Vehicle_state_machine = IDLE;
-				}
-			}
+		/* AS Finished: EBS engaged and HV off */
+		t24.front_solenoid = 0;
+		t24.rear_solenoid = 0;
+		t24.Ignition_enable = 0;
+		t24.Ignition_Request = 0;
+		t24.ASSI_state = AS_STATE_FINISHED;
+		if (t24.Ignition_Status == 1 && millis() - finish_tick >= FINISH_HV_OFF_TIMEOUT_MS) {
+			/* VCU kept HV on: EMERGENCY stops the watchdog, the SDC opens and cuts it */
+			Emergency_cause = UNKOWN;
+			Vehicle_state_machine = EMERGENCY;
+		} else if (t24.rpm <= 10 && t24.ASMS == 0) {
+			Vehicle_state_machine = IDLE;
 		}
 		break;
 	case AS_Emergency:
@@ -102,6 +112,7 @@ void Handle_state(uint8_t prev_asms_state) {
 		break;
 	case IDLE:
 		t24.Ignition_enable = 0;
+		t24.Ignition_Request = 0;
 		as_on_first_time = 0;
 		ACU_STATE = MISSION_SELECT;
 		if (t24.ASMS == 1 && prev_asms_state == 0 && t24.ignition_pin_state == 0) {
@@ -143,5 +154,15 @@ void toggle_wdt() {
 		}
 	}
 
+}
+
+/* TIM2, 10 Hz: each IGN button press toggles the HV request (ACU frame `ign`) sent to the VCU. */
+void update_ignition_request(void) {
+	if (t24.ignition_pin_state == 1 && t24.prev_ign_pin_state == 0) {
+		t24.Ignition_Request = !t24.Ignition_Request;
+	}
+	t24.prev_ign_pin_state = t24.ignition_pin_state;
+	/* Every tick, not only on a press: losing the enable must drop an HV request already sent */
+	t24.Ignition_Request &= t24.Ignition_enable;
 }
 

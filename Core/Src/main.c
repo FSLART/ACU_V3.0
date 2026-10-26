@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include "ee24.h"
 #include "ble_handler.h"
+#include "state_machine.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -276,12 +277,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		AS_data.asms = t24.ASMS;
 		AS_data.assi_state = t24.ASSI_state;
 		AS_data.emergency = t24.Emergency;
-		/* Rising-edge toggle: each press flips Ignition_Request */
-		if (t24.ignition_pin_state == 1 && t24.prev_ign_pin_state == 0) {
-			t24.Ignition_Request = !t24.Ignition_Request;
-			t24.Ignition_Request &= t24.Ignition_enable;
-		}
-		t24.prev_ign_pin_state = t24.ignition_pin_state;
+		update_ignition_request();
 		AS_data.ign = t24.Ignition_Request;
 		AS_data.mission_select = t24.Current_Mission;
 		AS_data.acu_state = (uint8_t)Vehicle_state_machine;
