@@ -32,12 +32,16 @@ uint8_t prev_car_state = -1;
 uint8_t prev_as_state = -1;
 
 /* RN4871 configuration commands — transparent serial bridge mode */
-#define BLE_CFG_NUM_CMDS  3
+#define BLE_CFG_NUM_CMDS  4
+
+/* The RN4871 powers up with the ACU and ignores "$$$" until it has booted. */
+#define BLE_BOOT_DELAY_MS 1000
 
 static const char* ble_cfg_cmds[BLE_CFG_NUM_CMDS] = {
-    "SN,ACU_V3\r\n",
+    "SN," BLE_DEVICE_NAME "\r\n",
+    "SS,C0\r\n",        /* Device Information + Transparent UART service, which BLE terminal apps look for */
     "SR,01\r\n",
-    "R,1\r\n",
+    "R,1\r\n",          /* settings take effect after a reboot */
 };
 
 static uint8_t      ble_cfg_state = 0;
@@ -196,8 +200,11 @@ void ble_module_config_tick(void) {
     case 5: /* done */
         break;
 
-    case 1: /* ENTER_CMD: send $$$ */
-        HAL_UART_Transmit(&huart1, (uint8_t*)"$$$", 3, 10);
+    case 1: /* ENTER_CMD: send $$$ once the module has booted */
+        if (now - ble_cfg_tick < BLE_BOOT_DELAY_MS) {
+            break;
+        }
+        HAL_UART_Transmit(BLE_UART, (uint8_t*)"$$$", 3, 10);
         ble_cfg_tick = now;
         ble_cfg_state = 2;
         break;
@@ -212,7 +219,7 @@ void ble_module_config_tick(void) {
 
     case 3: /* SEND_CMD: send next configuration command */
         if (ble_cfg_index < BLE_CFG_NUM_CMDS) {
-            HAL_UART_Transmit(&huart1,
+            HAL_UART_Transmit(BLE_UART,
                               (uint8_t*)ble_cfg_cmds[ble_cfg_index],
                               strlen(ble_cfg_cmds[ble_cfg_index]), 10);
             ble_cfg_tick = now;

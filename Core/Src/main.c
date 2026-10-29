@@ -315,31 +315,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		can_tx_header.DLC = AUTONOMOUS_T26_ASF_SIGNALS_LENGTH;
 
 		CAN_Send(&hcan1, &can_tx_header, tx_data);
-
-		/* ── BLE telemetry: 15-byte binary packet via ble_handler ── */
-		if (!ble_module_config_is_done()) {
-		    return;
-		}
-		if (ble_tx_busy) {
-		    return;                 /* still sending previous packet, skip this tick */
-		}
-		static ble_telemetry_packet_t pkt;
-		pkt.state_machine      = (uint8_t)Vehicle_state_machine;
-		pkt.assi_status        = t24.ASSI_state;
-		pkt.mission            = (uint8_t)t24.Current_Mission;
-		{   float _v = t24.Front_Pressure.Hydraulic * 100.0f;
-		    pkt.hydraulic_p1 = (_v > 65535.0f) ? 65535 : (uint16_t)_v; }
-		{   float _v = t24.Rear_Pressure.Hydraulic * 100.0f;
-		    pkt.hydraulic_p2 = (_v > 65535.0f) ? 65535 : (uint16_t)_v; }
-		{   float _v = t24.Front_Pressure.Pneumatic * 100.0f;
-		    pkt.pneumatic_p1 = (_v > 65535.0f) ? 65535 : (uint16_t)_v; }
-		{   float _v = t24.Rear_Pressure.Pneumatic * 100.0f;
-		    pkt.pneumatic_p2 = (_v > 65535.0f) ? 65535 : (uint16_t)_v; }
-		{   float _v = t24.chip_temp * 100.0f;
-		    pkt.chip_temp = (_v > 32767.0f) ? 32767 : (_v < -32768.0f) ? -32768 : (int16_t)_v; }
-		pkt.solenoid_front   = t24.front_solenoid;
-		pkt.solenoid_rear    = t24.rear_solenoid;
-		ble_send_binary((uint8_t*)&pkt, sizeof(pkt));
 	}
 }
 

@@ -39,10 +39,11 @@ extern GPIO_TypeDef sim_gpio_ports[8];
 #define GPIO_PIN_15 ((uint16_t)0x8000)
 
 typedef struct { int unused; } ADC_HandleTypeDef;
-typedef struct { int unused; } DMA_HandleTypeDef;
+typedef struct { uint32_t remaining; } DMA_HandleTypeDef;   /* NDTR: bytes left in the transfer */
 typedef struct { int unused; } I2C_HandleTypeDef;
 typedef struct { int unused; } TIM_HandleTypeDef;
-typedef struct { int unused; } UART_HandleTypeDef;
+typedef struct { DMA_HandleTypeDef *hdmarx; } UART_HandleTypeDef;
+#define __HAL_DMA_GET_COUNTER(hdma) ((hdma)->remaining)
 typedef struct { int unused; } RTC_HandleTypeDef;
 typedef struct { int unused; } CAN_HandleTypeDef;
 
@@ -73,6 +74,9 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state);
 void HAL_GPIO_TogglePin(GPIO_TypeDef *port, uint16_t pin);
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *huart, const uint8_t *data, uint16_t size, uint32_t timeout);
 HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, const uint8_t *data, uint16_t size);
+HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, uint8_t *data, uint16_t size);
+HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *huart);
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
 HAL_StatusTypeDef HAL_ADC_Start_DMA(ADC_HandleTypeDef *hadc, uint32_t *data, uint32_t length);
 HAL_StatusTypeDef HAL_TIM_Base_Start(TIM_HandleTypeDef *htim);
 HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *htim);

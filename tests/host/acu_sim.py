@@ -131,6 +131,12 @@ class AcuSim:
         lib.sim_can_rx_brake_pressures.argtypes = [ctypes.c_float, ctypes.c_float]
         lib.sim_step_ms.argtypes = [ctypes.c_uint32]
         lib.sim_get_state.argtypes = [ctypes.POINTER(SimState)]
+        lib.sim_ble_read.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        lib.sim_ble_read.restype = ctypes.c_uint32
+        lib.sim_ble_receive.argtypes = [ctypes.c_char_p]
+        lib.sim_ble_commands.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        lib.sim_ble_commands.restype = ctypes.c_uint32
+        self._ble_buf = ctypes.create_string_buffer(8192)
         if lib.sim_state_size() != ctypes.sizeof(SimState):
             raise RuntimeError("STATE_FIELDS in acu_sim.py does not match sim_state_t in sim.c")
         self._raw = SimState()
@@ -155,6 +161,20 @@ class AcuSim:
     def state(self):
         self.lib.sim_get_state(ctypes.byref(self._raw))
         return Snapshot(self._raw)
+
+    def ble_read(self):
+        """Text the ACU sent over Bluetooth since the last call."""
+        n = self.lib.sim_ble_read(self._ble_buf, len(self._ble_buf))
+        return self._ble_buf.raw[:n].decode("latin-1")
+
+    def ble_commands(self):
+        """Configuration commands sent to the RN4871 since power-on."""
+        n = self.lib.sim_ble_commands(self._ble_buf, len(self._ble_buf))
+        return self._ble_buf.raw[:n].decode("latin-1")
+
+    def ble_send(self, text):
+        """Text typed in the phone's Bluetooth terminal."""
+        self.lib.sim_ble_receive(text.encode("latin-1"))
 
 
 @dataclass
@@ -201,6 +221,7 @@ class World:
         self._wdt_last_ms = 0
         self._ign_release_ms = None
         self.events = []          # (time_ms, field, old, new)
+        self.ble_text = ""        # everything the phone received
         self.state = self.acu.state()
         self._last = {f: getattr(self.state, f) for f in TRACKED}
 
@@ -267,6 +288,7 @@ class World:
             lib.sim_can_rx_res()
 
         lib.sim_step_ms(1)
+        self.ble_text += acu.ble_read()
         self.state = acu.state()
         for f in TRACKED:
             value = getattr(self.state, f)

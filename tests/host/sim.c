@@ -2,10 +2,10 @@
  * PC test harness for the ACU logic.
  *
  * build.py compiles the real APP.c, state_machine.c, Autonomous_functions.c,
- * hardware_abstaction.c, ring_buffer.c and the T26 DBC code against
- * stub/stm32f4xx_hal.h. This file stands in for the hardware: GPIO pins, the
- * millisecond tick, the CAN RX interrupt, and the TIM2 (10 Hz) and ADC
- * interrupts from main.c. acu_sim.py drives it through the sim_* functions.
+ * hardware_abstaction.c, ring_buffer.c, ble_handler.c and the T26 DBC code
+ * against stub/stm32f4xx_hal.h. This file stands in for the hardware: GPIO pins,
+ * the millisecond tick, the CAN RX interrupt, the TIM2 (10 Hz) and ADC interrupts
+ * from main.c, and USART1 to the RN4871. acu_sim.py drives it through sim_*.
  */
 #include "main.h"
 #include "APP.h"
@@ -31,7 +31,6 @@ uint32_t ADC_Samples[4];
 uint8_t mission_selector_enable;
 struct ring can_tx_ringbuffer;
 struct ring can_rx_ringbuffer;
-volatile uint8_t ble_tx_busy;
 
 extern uint8_t activate_res;
 extern cant_acu_state_t ACU_STATE;
@@ -102,17 +101,84 @@ void HAL_GPIO_TogglePin(GPIO_TypeDef *port, uint16_t pin)
 	p->changes++;
 }
 
-HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n, uint32_t t) { return HAL_OK; }
-HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n) { return HAL_OK; }
 HAL_StatusTypeDef HAL_ADC_Start_DMA(ADC_HandleTypeDef *h, uint32_t *d, uint32_t n) { return HAL_OK; }
 HAL_StatusTypeDef HAL_TIM_Base_Start(TIM_HandleTypeDef *h) { return HAL_OK; }
 HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *h) { return HAL_OK; }
 
+/* USART1 = RN4871. ble_out is what the phone receives; DMA transfers take
+ * the real time at 115200 baud before the TX complete interrupt fires. */
+static char ble_out[65536];
+static size_t ble_out_len;
+static int ble_tx_pending;
+static uint32_t ble_tx_done_ms;
+static DMA_HandleTypeDef ble_rx_dma;
+static uint8_t *ble_rx_buf;
+static uint16_t ble_rx_size;
+static char ble_commands[1024];
+static size_t ble_commands_len;
+
+/* Bytes from the RN4871 into the circular RX DMA buffer. */
+static void ble_rx_write(const char *text)
+{
+	for (; *text && ble_rx_buf; text++) {
+		ble_rx_buf[ble_rx_size - ble_rx_dma.remaining] = (uint8_t)*text;
+		ble_rx_dma.remaining = ble_rx_dma.remaining > 1 ? ble_rx_dma.remaining - 1 : ble_rx_size;
+	}
+}
+
+/* Blocking sends on USART1 are the RN4871 configuration commands (APP.c).
+ * The module answers like the real one: CMD> after $$$, AOK per command. */
+HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n, uint32_t t)
+{
+	if (h != &huart1)
+		return HAL_OK;
+	if (ble_commands_len + n < sizeof(ble_commands)) {
+		memcpy(ble_commands + ble_commands_len, d, n);
+		ble_commands_len += n;
+	}
+	if (n == 3 && memcmp(d, "$$$", 3) == 0)
+		ble_rx_write("CMD> ");
+	else if (n >= 3 && memcmp(d, "R,1", 3) == 0)
+		ble_rx_write("Rebooting\r\n");
+	else
+		ble_rx_write("AOK\r\nCMD> ");
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *d, uint16_t n)
+{
+	size_t room = sizeof(ble_out) - ble_out_len;
+
+	if (h != &huart1)
+		return HAL_OK;
+	if (ble_tx_pending)
+		return HAL_BUSY;
+	memcpy(ble_out + ble_out_len, d, n < room ? n : room);
+	ble_out_len += n < room ? n : room;
+	ble_tx_pending = 1;
+	ble_tx_done_ms = now_ms + (n * 10u * 1000u + 115199u) / 115200u;
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef *h, uint8_t *d, uint16_t n)
+{
+	if (h == &huart1) {
+		ble_rx_buf = d;
+		ble_rx_size = n;
+		ble_rx_dma.remaining = n;
+	}
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef HAL_UART_AbortTransmit(UART_HandleTypeDef *h)
+{
+	if (h == &huart1)
+		ble_tx_pending = 0;
+	return HAL_OK;
+}
+
 /* ---- Modules not under test --------------------------------------------- */
 
-void ble_handler_init(void) {}
-void ble_handler(void) {}
-HAL_StatusTypeDef ble_send_binary(const uint8_t *data, uint16_t len) { return HAL_OK; }
 void CAN_Service(CAN_HandleTypeDef *hcan) {}
 HAL_StatusTypeDef CAN_Send(CAN_HandleTypeDef *hcan, const CAN_TxHeaderTypeDef *header, const uint8_t data[8]) { return HAL_OK; }
 
@@ -138,7 +204,34 @@ SIM_API uint32_t sim_state_size(void) { return sizeof(sim_state_t); }
 SIM_API void sim_init(void)
 {
 	now_ms = 0;
+	huart1.hdmarx = &ble_rx_dma;
 	app_init();
+}
+
+/* Text the ACU sent to the phone since the last call. */
+SIM_API uint32_t sim_ble_read(char *dst, uint32_t max)
+{
+	uint32_t n = ble_out_len < max ? (uint32_t)ble_out_len : max;
+
+	memcpy(dst, ble_out, n);
+	memmove(ble_out, ble_out + n, ble_out_len - n);
+	ble_out_len -= n;
+	return n;
+}
+
+/* Every configuration command sent to the RN4871 since power-on. */
+SIM_API uint32_t sim_ble_commands(char *dst, uint32_t max)
+{
+	uint32_t n = ble_commands_len < max ? (uint32_t)ble_commands_len : max;
+
+	memcpy(dst, ble_commands, n);
+	return n;
+}
+
+/* Text typed on the phone, written into the circular RX DMA buffer. */
+SIM_API void sim_ble_receive(const char *text)
+{
+	ble_rx_write(text);
 }
 
 SIM_API void sim_set_pin(const char *name, int level)
@@ -241,6 +334,10 @@ SIM_API void sim_step_ms(uint32_t ms)
 {
 	for (uint32_t i = 0; i < ms; i++) {
 		now_ms++;
+		if (ble_tx_pending && now_ms >= ble_tx_done_ms) {
+			ble_tx_pending = 0;
+			HAL_UART_TxCpltCallback(&huart1);
+		}
 		t24.Front_Pressure.Pneumatic = pneumatic_front;
 		t24.Rear_Pressure.Pneumatic = pneumatic_rear;
 

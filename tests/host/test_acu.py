@@ -209,5 +209,60 @@ class MissionEnd(AcuTest):
         self.assert_safe_stop(300)
 
 
+class Bluetooth(AcuTest):
+    """Plain text the phone receives from the RN4871 on USART1."""
+
+    LINK_UP_MS = 5000   # 1 s boot delay + $$$ + 4 commands, 500 ms each
+
+    def test_module_configured_on_every_boot(self):
+        self.w.run(900)
+        self.assertEqual(self.w.acu.ble_commands(), "", "commands sent before the RN4871 has booted")
+        self.w.run(self.LINK_UP_MS)
+        self.assertEqual(self.w.acu.ble_commands(), "$$$SN,ACU TEK-26e\r\nSS,C0\r\nSR,01\r\nR,1\r\n")
+        self.assertIn("ACU TEK-26e ligada", self.w.ble_text)
+        self.assertIn("RN4871: CMD> AOK", self.w.ble_text, "module replies not reported")
+
+    def test_status_block_every_second(self):
+        self.w.run(self.LINK_UP_MS + 3000)
+        text = self.w.ble_text
+        self.assertGreaterEqual(text.count("== ACU "), 3, text[-800:])
+        for label in ("Estado:", "Arranque:", "Missao:", "Emergencia:", "HV:", "EBS frente/tras:",
+                      "Hidr frente/tras:", "Pneu frente/tras:"):
+            self.assertIn(label, text)
+
+    def test_only_readable_text(self):
+        self.start()
+        bad = {c for c in self.w.ble_text if not (c.isprintable() or c in "\r\n")}
+        self.assertFalse(bad, f"non-text bytes sent: {sorted(bad)}")
+
+    def test_state_change_sent_at_once(self):
+        self.w.run(self.LINK_UP_MS)
+        self.w.set_mission("INSPECTION")
+        self.w.ble_text = ""
+        self.w.set_asms(True)
+        self.w.run(100)
+        self.assertIn("Estado IDLE->AS_ON", self.w.ble_text)
+
+    def test_emergency_line(self):
+        self.start()
+        self.w.run(1000)   # monitoring starts 600 ms after AS Ready
+        self.w.ble_text = ""
+        self.w.plant.sdc_chain_closed = False
+        self.w.run(100)
+        self.assertIn("Estado AS_ON->EMERGENCY", self.w.ble_text)
+        self.assertIn("Emergencia NONE->SDC_OPEN", self.w.ble_text)
+
+    def test_stop_and_start_commands(self):
+        self.w.run(self.LINK_UP_MS)
+        self.w.acu.ble_send("stop\r\n")
+        self.w.run(100)
+        self.w.ble_text = ""
+        self.w.run(2500)
+        self.assertEqual(self.w.ble_text, "", "telemetry still sent after 'stop'")
+        self.w.acu.ble_send("start\r\n")
+        self.w.run(1500)
+        self.assertIn("== ACU ", self.w.ble_text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -254,10 +254,20 @@ class App(tk.Tk):
         notebook.pack(fill="both", expand=True, pady=(6, 0))
         self.log = tk.Text(notebook, width=46, font=("Consolas", 9))
         self.tests = tk.Text(notebook, width=46, font=("Consolas", 9))
+        phone = ttk.Frame(notebook)
+        self.ble = tk.Text(phone, width=46, font=("Consolas", 9), bg="#101010", fg="#d0ffd0")
+        self.ble.pack(fill="both", expand=True)
+        command_row = ttk.Frame(phone)
+        command_row.pack(fill="x")
+        self.ble_command = tk.StringVar(value="stop")
+        ttk.Entry(command_row, textvariable=self.ble_command, width=20).pack(side="left")
+        ttk.Button(command_row, text="Send from phone",
+                   command=lambda: self.world.acu.ble_send(self.ble_command.get() + "\r\n")).pack(side="left")
         for widget in (self.log, self.tests):
             widget.tag_configure("bad", foreground="#c00000")
             widget.tag_configure("good", foreground="#007a00")
         notebook.add(self.log, text="Transitions")
+        notebook.add(phone, text="Bluetooth (phone)")
         notebook.add(self.tests, text="Unit tests")
 
     def draw_machines(self):
@@ -294,6 +304,7 @@ class App(tk.Tk):
         self.script = None
         self.events_shown = 0
         self.log.delete("1.0", "end")
+        self.ble.delete("1.0", "end")
         self.apply_controls()
         self.note("power on")
         self.refresh()
@@ -382,6 +393,11 @@ class App(tk.Tk):
         if len(w.events) > self.events_shown:
             self.log.see("end")
         self.events_shown = len(w.events)
+
+        if w.ble_text:
+            self.ble.insert("end", w.ble_text.replace("\r", ""))
+            self.ble.see("end")
+            w.ble_text = ""
 
         now = s.time_ms
         rows = [

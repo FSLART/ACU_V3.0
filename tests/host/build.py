@@ -19,6 +19,7 @@ SOURCES = [
     ROOT / "Core/Src/Autonomous_functions.c",
     ROOT / "Core/Src/hardware_abstaction.c",
     ROOT / "Core/Src/ring_buffer.c",
+    ROOT / "Core/Src/ble_handler.c",
     ROOT / "Core/DBC/autonomous_t26.c",
     HERE / "sim.c",
 ]
