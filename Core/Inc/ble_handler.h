@@ -18,7 +18,7 @@ extern UART_HandleTypeDef huart1;
 #define BLE_DEVICE_NAME     "ACU TEK-26e"
 
 #define BLE_RX_BUF_SIZE     256
-#define BLE_TX_BUF_SIZE     512
+#define BLE_TX_BUF_SIZE     768
 
 #define TIMEOUT_CMD_MS      1000
 

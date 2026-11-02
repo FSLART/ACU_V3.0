@@ -31,6 +31,7 @@ uint32_t ADC_Samples[4];
 uint8_t mission_selector_enable;
 struct ring can_tx_ringbuffer;
 struct ring can_rx_ringbuffer;
+CAN_BusStatus can1_status;
 
 extern uint8_t activate_res;
 extern cant_acu_state_t ACU_STATE;

@@ -61,6 +61,11 @@ static const char *const as_names[] = {
 static const char *const mission_names[] = {
     NAME(MANUAL), NAME(ACCELERATION), NAME(SKIDPAD), NAME(TRACKDRIVE), NAME(EBS_TEST),
     NAME(INSPECTION), NAME(AUTOCROSS) };
+static const char *const can_state_names[] = {
+    NAME(CAN_BUS_OK), NAME(CAN_BUS_WARNING), NAME(CAN_BUS_PASSIVE), NAME(CAN_BUS_OFF), NAME(CAN_BUS_NOT_STARTED) };
+static const char *const can_error_names[] = {
+    NAME(CAN_ERR_NONE), NAME(CAN_ERR_STUFF), NAME(CAN_ERR_FORM), NAME(CAN_ERR_ACK),
+    NAME(CAN_ERR_BIT_RECESSIVE), NAME(CAN_ERR_BIT_DOMINANT), NAME(CAN_ERR_CRC) };
 static const char *const cause_names[] = {
     NAME(NONE), NAME(SDC_OPEN), NAME(RES), NAME(Pressure_checks), NAME(VCU_Timeout),
     NAME(Jetson_timeout), NAME(ACU_WDT_TRIGERED), NAME(dir_actuator_timeout),
@@ -238,6 +243,22 @@ static uint8_t send_status(void) {
               (double)t24.Rear_Pressure.Hydraulic);
     tx_printf("Pneu frente/tras: %.2f / %.2f bar\r\n", (double)t24.Front_Pressure.Pneumatic,
               (double)t24.Rear_Pressure.Pneumatic);
+    tx_printf("CAN: %s  TEC %u REC %u  bus-off %lu  erro %s\r\n",
+              NAME_OF(can_state_names, can1_status.state), can1_status.tec, can1_status.rec,
+              (unsigned long)can1_status.bus_off, NAME_OF(can_error_names, can1_status.last_error));
+    tx_printf("Idade ms: VCU %lu Jetson %lu RES %lu AQT7 %lu Dir %lu\r\n",
+              (unsigned long)(ms - t24.VCU_LAST_TX), (unsigned long)(ms - t24.JETSON_LAST_TX),
+              (unsigned long)(ms - t24.RES_LAST_TX), (unsigned long)(ms - t24.REAR_PRESSURE_LAST_TX),
+              (unsigned long)(ms - t24.DIR_ACTUATOR_LAST_TX));
+    tx_printf("Ign ACU->VCU: pedido %u enable %u   WDT: %s\r\n", t24.Ignition_Request, t24.Ignition_enable,
+              t24.HW_WDT_Enable ? "ON" : "OFF");
+#if BYPASS_JETSON_TIMEOUT
+    tx_printf("!! BYPASS: timeout do Jetson DESLIGADO !!\r\n");
+#endif
+    if (seq_fail.count) {
+        tx_printf("Falha arranque: %s aos %lu.%lu s\r\n", NAME_OF(sequence_names, seq_fail.step),
+                  (unsigned long)(seq_fail.ms / 1000), (unsigned long)((seq_fail.ms % 1000) / 100));
+    }
     tx_send();
     return 1;
 }

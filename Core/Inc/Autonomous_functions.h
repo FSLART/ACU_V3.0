@@ -33,6 +33,9 @@
 #define BYPASS_FRONT_HYD_PRESSURE_UNLOADED 0.0f
 
 #define MAX_TIMEOUT 1000
+#define JETSON_TIMEOUT_MS 2000   /* Linux side can stall longer than the MCU nodes */
+// TEST BYPASS: 1 = a silent Jetson does not trigger EMERGENCY. Bench only, set to 0 before running on track.
+#define BYPASS_JETSON_TIMEOUT 1
 
 extern Main_state_machine_t Vehicle_state_machine;
 extern struct ring can_rx_ringbuffer;

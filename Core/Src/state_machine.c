@@ -96,6 +96,7 @@ void Handle_Emergency() {
 	t24.HW_WDT_Enable = 0;
 	t24.Ignition_Request = 0;
 	t24.Emergency = 1;
+	t24.Autonomous_State = AS_STATE_EMERGENCY;   /* ASSI blue flashing + as_state on CAN, even with the Jetson silent */
 	HAL_GPIO_WritePin(Front_Solenoid_GPIO_Port, Front_Solenoid_Pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(Rear_Solenoid_GPIO_Port, Rear_Solenoid_Pin, GPIO_PIN_RESET);
 	t24.front_solenoid = 0;

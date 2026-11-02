@@ -305,7 +305,8 @@ void dbc_decode(){
 		autonomous_t26_jetson_unpack(&jetson_data, can_rx_data.tx_data,AUTONOMOUS_T26_JETSON_LENGTH);
 		{
 			volatile uint8_t decoded_state = autonomous_t26_jetson_as_state_decode(jetson_data.as_state);
-			if (decoded_state == AS_STATE_DRIVING || decoded_state == AS_STATE_FINISHED || decoded_state == AS_STATE_EMERGENCY) {
+			if (Vehicle_state_machine != EMERGENCY
+					&& (decoded_state == AS_STATE_DRIVING || decoded_state == AS_STATE_FINISHED || decoded_state == AS_STATE_EMERGENCY)) {
 				t24.Autonomous_State = decoded_state;
 			}
 		}

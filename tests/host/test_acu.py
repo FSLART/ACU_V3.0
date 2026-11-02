@@ -4,9 +4,14 @@
 
 Each test powers up a fresh ACU (acu_sim.World) and drives the car around it.
 """
+import re
 import unittest
 
 from acu_sim import Plant, World
+from build import ROOT
+
+JETSON_BYPASS = re.search(r"#define\s+BYPASS_JETSON_TIMEOUT\s+1\b",
+                          (ROOT / "Core/Inc/Autonomous_functions.h").read_text())
 
 
 class AcuTest(unittest.TestCase):
@@ -90,6 +95,8 @@ class LowRearTank(AcuTest):
         self.assertEqual(s.vehicle_state, "EMERGENCY")
         self.assertEqual(s.seq_fail_step, "PNEUMATIC_CHECK")
         self.assertEqual(s.emergency_cause, "Pressure_checks")
+        self.w.run(4000)
+        self.assertIn("Falha arranque: PNEUMATIC_CHECK", self.w.ble_text)
 
 
 class SdcNeverCloses(AcuTest):
@@ -118,6 +125,12 @@ class Monitoring(AcuTest):
         self.check(ok, f"no EMERGENCY within {within_ms} ms")
         self.assertEqual(self.w.state.emergency_cause, cause)
         self.assert_safe_stop(500)
+        blue_before = self.w.acu.pin_changes("ASSI_BLUE")
+        self.w.run(1000)
+        self.assertEqual(self.w.state.as_state, "AS_STATE_EMERGENCY", "AS state not Emergency")
+        changes = self.w.acu.pin_changes("ASSI_BLUE") - blue_before
+        self.assertTrue(4 <= changes <= 10, f"ASSI blue: {changes / 2:g} Hz, T 14.8 wants 2-5 Hz")
+        self.assertEqual(self.w.acu.pin("ASSI_YELLOW"), 0)
 
     def test_sdc_open(self):
         self.w.plant.sdc_chain_closed = False
@@ -128,8 +141,12 @@ class Monitoring(AcuTest):
         self.expect_emergency("VCU_Timeout", 1200)
 
     def test_jetson_lost(self):
+        if JETSON_BYPASS:
+            self.skipTest("BYPASS_JETSON_TIMEOUT is 1 in Autonomous_functions.h")
         self.w.plant.jetson_alive = False
-        self.expect_emergency("Jetson_timeout", 1200)
+        self.w.run(1800)
+        self.assertEqual(self.w.state.vehicle_state, "AS_ON", "Jetson timeout fired before 2 s")
+        self.expect_emergency("Jetson_timeout", 400)
 
     def test_res_lost(self):
         self.w.plant.res_alive = False
@@ -227,7 +244,8 @@ class Bluetooth(AcuTest):
         text = self.w.ble_text
         self.assertGreaterEqual(text.count("== ACU "), 3, text[-800:])
         for label in ("Estado:", "Arranque:", "Missao:", "Emergencia:", "HV:", "EBS frente/tras:",
-                      "Hidr frente/tras:", "Pneu frente/tras:"):
+                      "Hidr frente/tras:", "Pneu frente/tras:", "CAN: CAN_BUS_", "Idade ms: VCU ",
+                      "Ign ACU->VCU: pedido "):
             self.assertIn(label, text)
 
     def test_only_readable_text(self):

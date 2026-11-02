@@ -250,6 +250,9 @@ void continuous_monitoring(uint8_t sdc_status, float Rear_pneumatic,
 	}
 }
 
+/* T 14.8: 2-5 Hz flashing, 50 % duty. 166 ms on, 166 ms off = 3 Hz. */
+#define ASSI_HALF_PERIOD_MS 166
+
 int ASSI_control(uint8_t gpio_state, uint8_t ASSI_state) {
 
 	/*
@@ -283,14 +286,14 @@ int ASSI_control(uint8_t gpio_state, uint8_t ASSI_state) {
 		gpio_state = 0b00000001;
 		break;
 	case AS_STATE_DRIVING:
-		if (millis() - prev_time_yellow >= 330) {
+		if (millis() - prev_time_yellow >= ASSI_HALF_PERIOD_MS) {
 			gpio_state ^= 1;
 			gpio_state &= 0b00000001;
 			prev_time_yellow = millis();
 		}
 		break;
 	case AS_STATE_EMERGENCY:
-		if (millis() - prev_time_blue >= 330) {
+		if (millis() - prev_time_blue >= ASSI_HALF_PERIOD_MS) {
 			gpio_state ^= 0b00000010;
 			gpio_state &= 0b00000010;
 			prev_time_blue = millis();
@@ -319,8 +322,10 @@ uint8_t module_timeout() {
 	if (current_time - t24.VCU_LAST_TX > MAX_TIMEOUT)
 		return VCU_TIMEOUT;
 	//if(current_time - t24.REAR_PRESSURE_LAST_TX > MAX_TIMEOUT) return PRESSURE_TIMEOUT;
-	if (current_time - t24.JETSON_LAST_TX > MAX_TIMEOUT)
+#if !BYPASS_JETSON_TIMEOUT
+	if (current_time - t24.JETSON_LAST_TX > JETSON_TIMEOUT_MS)
 		return JETSON_TIMEOUT;
+#endif
 	//TODO FOI DESABILITADO PARA NAO DAR ASNEIRA
 	//if(current_time - t24.DIR_ACTUATOR_LAST_TX > MAX_TIMEOUT) return  DIR_TIMEOUT;
 	if (current_time - t24.RES_LAST_TX > MAX_TIMEOUT)
