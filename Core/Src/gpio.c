@@ -62,8 +62,8 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MS5_GPIO_Port, MS5_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PCPin PCPin PCPin PCPin
-                           PCPin PCPin */
+  /*Configure GPIO pins : WDT_PULSE_Pin HB_Pin MS1_Pin MS2_Pin
+                           MS3_Pin MS4_Pin */
   GPIO_InitStruct.Pin = WDT_PULSE_Pin|HB_Pin|MS1_Pin|MS2_Pin
                           |MS3_Pin|MS4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -71,14 +71,14 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : SDC_FEEDBACK_Pin */
   GPIO_InitStruct.Pin = SDC_FEEDBACK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(SDC_FEEDBACK_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PBPin PBPin PBPin PBPin
-                           PBPin PBPin PBPin */
+  /*Configure GPIO pins : CAN_INDICATO_Pin LED1_Pin LED2_Pin Rear_Solenoid_Pin
+                           Front_Solenoid_Pin ASSI_YELLOW_Pin ASSI_BLUE_Pin */
   GPIO_InitStruct.Pin = CAN_INDICATO_Pin|LED1_Pin|LED2_Pin|Rear_Solenoid_Pin
                           |Front_Solenoid_Pin|ASSI_YELLOW_Pin|ASSI_BLUE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -86,26 +86,26 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : MS5_Pin */
   GPIO_InitStruct.Pin = MS5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(MS5_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : ASMS_Pin */
   GPIO_InitStruct.Pin = ASMS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ASMS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : MS_BTN_Pin */
   GPIO_InitStruct.Pin = MS_BTN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MS_BTN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : IGN_BTN_Pin */
   GPIO_InitStruct.Pin = IGN_BTN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;

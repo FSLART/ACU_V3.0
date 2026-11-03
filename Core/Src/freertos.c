@@ -47,19 +47,53 @@
 /* USER CODE BEGIN Variables */
 
 /* USER CODE END Variables */
-osThreadId defaultTaskHandle;
+osThreadId controlTaskHandle;
+osThreadId telemetryTaskHandle;
+osThreadId loggerTaskHandle;
+osMessageQId canRxQueueHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const * argument);
+extern void ControlTask(void const * argument);
+extern void TelemetryTask(void const * argument);
+extern void LoggerTask(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* GetIdleTaskMemory prototype (linked to static allocation support) */
 void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize );
+
+/* Hook prototypes */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+void vApplicationMallocFailedHook(void);
+
+/* USER CODE BEGIN 4 */
+__weak void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+{
+   /* Run time stack overflow checking is performed if
+   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
+   called if a stack overflow is detected. */
+}
+/* USER CODE END 4 */
+
+/* USER CODE BEGIN 5 */
+__weak void vApplicationMallocFailedHook(void)
+{
+   /* vApplicationMallocFailedHook() will only be called if
+   configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h. It is a hook
+   function that will get called if a call to pvPortMalloc() fails.
+   pvPortMalloc() is called internally by the kernel whenever a task, queue,
+   timer or semaphore is created. It is also called by various parts of the
+   demo application. If heap_1.c or heap_2.c are used, then the size of the
+   heap available to pvPortMalloc() is defined by configTOTAL_HEAP_SIZE in
+   FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
+   to query the size of free heap space that remains (although it does not
+   provide information on how the remaining heap might be fragmented). */
+}
+/* USER CODE END 5 */
 
 /* USER CODE BEGIN GET_IDLE_TASK_MEMORY */
 static StaticTask_t xIdleTaskTCBBuffer;
@@ -96,34 +130,51 @@ void MX_FREERTOS_Init(void) {
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* definition and creation of canRxQueue */
+  osMessageQDef(canRxQueue, 64, can_frame_t);
+  canRxQueueHandle = osMessageCreate(osMessageQ(canRxQueue), NULL);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+  /* definition and creation of controlTask */
+  osThreadDef(controlTask, ControlTask, osPriorityHigh, 0, 512);
+  controlTaskHandle = osThreadCreate(osThread(controlTask), NULL);
+
+  /* definition and creation of telemetryTask */
+  osThreadDef(telemetryTask, TelemetryTask, osPriorityBelowNormal, 0, 768);
+  telemetryTaskHandle = osThreadCreate(osThread(telemetryTask), NULL);
+
+  /* definition and creation of loggerTask */
+  osThreadDef(loggerTask, LoggerTask, osPriorityLow, 0, 512);
+  loggerTaskHandle = osThreadCreate(osThread(loggerTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  acu_tasks_create();
+  /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
 }
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_ControlTask */
 /**
-  * @brief  Function implementing the defaultTask thread.
+  * @brief  Function implementing the controlTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
+/* USER CODE END Header_ControlTask */
+__weak void ControlTask(void const * argument)
 {
-  /* USER CODE BEGIN StartDefaultTask */
-  /* The ACU tasks are created in acu_tasks.c; this generated one is not needed. */
-  vTaskDelete(NULL);
-  /* USER CODE END StartDefaultTask */
+  /* USER CODE BEGIN ControlTask */
+  /* The tasks are "As external" in the .ioc: ControlTask, TelemetryTask and LoggerTask
+   * are in acu_tasks.c, which overrides this weak one. */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END ControlTask */
 }
 
 /* Private application code --------------------------------------------------*/

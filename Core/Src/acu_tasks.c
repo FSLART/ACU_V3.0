@@ -8,31 +8,17 @@
 #include "ble_handler.h"
 #include "logger.h"
 #include "tim.h"
-#include "FreeRTOS.h"
-#include "queue.h"
-#include "task.h"
+#include "cmsis_os.h"
 
 #define CONTROL_PERIOD_MS      1
 #define TELEMETRY_PERIOD_MS    10
 #define LOGGER_PERIOD_MS       20
 #define CONTROL_LATE_MS        2
 
-#define CONTROL_STACK_WORDS    512
-#define TELEMETRY_STACK_WORDS  768
-#define LOGGER_STACK_WORDS     512
-#define CAN_RX_QUEUE_LENGTH    64
-
-#define CONTROL_PRIORITY       (tskIDLE_PRIORITY + 4)
-#define TELEMETRY_PRIORITY     (tskIDLE_PRIORITY + 2)
-#define LOGGER_PRIORITY        (tskIDLE_PRIORITY + 1)
-
 extern CAN_HandleTypeDef hcan1;
 extern uint32_t ADC_Samples[4];
 
-static QueueHandle_t can_rx_queue = NULL;
-static TaskHandle_t control_task = NULL;
-static TaskHandle_t telemetry_task = NULL;
-static TaskHandle_t logger_task = NULL;
+extern osMessageQId canRxQueueHandle; /* freertos.c, from the .ioc */
 static volatile uint32_t can_rx_dropped = 0;
 
 void acu_hardware_start(void) {
@@ -46,16 +32,16 @@ void acu_hardware_start(void) {
 void acu_tasks_can_frame_from_isr(const can_frame_t *frame) {
 	BaseType_t higher_priority_woken = pdFALSE;
 
-	if (can_rx_queue == NULL) {
-		return; /* scheduler not set up yet */
+	if (canRxQueueHandle == NULL) {
+		return; /* MX_FREERTOS_Init() not run yet */
 	}
-	if (xQueueSendFromISR(can_rx_queue, frame, &higher_priority_woken) != pdTRUE) {
+	if (xQueueSendFromISR(canRxQueueHandle, frame, &higher_priority_woken) != pdTRUE) {
 		can_rx_dropped++;
 	}
 	portYIELD_FROM_ISR(higher_priority_woken);
 }
 
-static void control_task_body(void *argument) {
+void ControlTask(void const *argument) {
 	(void)argument;
 	TickType_t wake_time = xTaskGetTickCount();
 	uint32_t last_cycle_ms = HAL_GetTick();
@@ -71,7 +57,7 @@ static void control_task_body(void *argument) {
 		last_cycle_ms = now;
 
 		can_frame_t frame;
-		while (xQueueReceive(can_rx_queue, &frame, 0) == pdTRUE) {
+		while (xQueueReceive(canRxQueueHandle, &frame, 0) == pdTRUE) {
 			can_rx_handle_frame(&frame, now);
 		}
 
@@ -86,7 +72,7 @@ static void control_task_body(void *argument) {
 	}
 }
 
-static void telemetry_task_body(void *argument) {
+void TelemetryTask(void const *argument) {
 	(void)argument;
 	ble_handler_init(HAL_GetTick());
 
@@ -97,7 +83,7 @@ static void telemetry_task_body(void *argument) {
 	}
 }
 
-static void logger_task_body(void *argument) {
+void LoggerTask(void const *argument) {
 	(void)argument;
 	fault_reason_t crash_reason;
 	uint32_t crash_detail;
@@ -112,14 +98,6 @@ static void logger_task_body(void *argument) {
 		acu.system.stack_free_logger = uxTaskGetStackHighWaterMark(NULL);
 		vTaskDelay(pdMS_TO_TICKS(LOGGER_PERIOD_MS));
 	}
-}
-
-void acu_tasks_create(void) {
-	can_rx_queue = xQueueCreate(CAN_RX_QUEUE_LENGTH, sizeof(can_frame_t));
-	xTaskCreate(control_task_body, "control", CONTROL_STACK_WORDS, NULL, CONTROL_PRIORITY, &control_task);
-	xTaskCreate(telemetry_task_body, "telemetry", TELEMETRY_STACK_WORDS, NULL, TELEMETRY_PRIORITY, &telemetry_task);
-	xTaskCreate(logger_task_body, "logger", LOGGER_STACK_WORDS, NULL, LOGGER_PRIORITY, &logger_task);
-	/* Any of these failing ends in vApplicationMallocFailedHook. */
 }
 
 /* configCHECK_FOR_STACK_OVERFLOW = 2 */
