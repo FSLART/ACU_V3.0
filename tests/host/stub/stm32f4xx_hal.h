@@ -58,6 +58,8 @@ typedef struct {
 #define CAN_ID_STD   0x00000000U
 #define CAN_ID_EXT   0x00000004U
 #define CAN_RTR_DATA 0x00000000U
+#define DISABLE 0
+#define ENABLE  1
 
 typedef struct { volatile uint32_t KR, PR, RLR, SR; } IWDG_TypeDef;
 extern IWDG_TypeDef sim_iwdg;

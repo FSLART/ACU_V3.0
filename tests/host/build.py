@@ -12,27 +12,20 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 OUT = HERE / "build" / "acu_sim.dll"
 
-# The firmware files under test. Everything else is stubbed in sim.c.
-SOURCES = [
-    ROOT / "Core/Src/APP.c",
-    ROOT / "Core/Src/state_machine.c",
-    ROOT / "Core/Src/Autonomous_functions.c",
-    ROOT / "Core/Src/hardware_abstaction.c",
-    ROOT / "Core/Src/ring_buffer.c",
-    ROOT / "Core/Src/ble_handler.c",
-    ROOT / "Core/DBC/autonomous_t26.c",
-    HERE / "sim.c",
+# The firmware files under test: everything that does not need FreeRTOS or real
+# registers. acu_tasks.c, acu_system.c and the CubeMX files are replaced by sim.c.
+FIRMWARE = [
+    "APP.c", "acu.c", "acu_mode.c", "as_state.c", "checkup.c", "monitoring.c", "ebs.c",
+    "faults.c", "inputs.c", "mission.c", "outputs.c", "can_rx.c", "can_tx.c", "logger.c",
+    "ble_handler.c", "EMA_Filter.c",
 ]
+SOURCES = [ROOT / "Core/Src" / f for f in FIRMWARE] + [ROOT / "Core/DBC/autonomous_t26.c", HERE / "sim.c"]
 HEADER_DIRS = [HERE / "stub", ROOT / "Core/Inc", ROOT / "Core/DBC"]
 
 FLAGS = [
     "-std=gnu11", "-O1", "-g", "-shared",
-    "-D__ARM_ARCH_7EM__=1",  # makes millis() use HAL_GetTick() like on the target
-    "-w",
-    # The firmware relies on GCC accepting these; clang makes them errors by default.
-    "-Wno-error=implicit-function-declaration",
-    "-Wno-error=int-conversion",
-    "-Wno-error=incompatible-pointer-types",
+    "-Wall", "-Wno-unused-function",
+    "-Werror=implicit-function-declaration", "-Werror=int-conversion", "-Werror=incompatible-pointer-types",
 ]
 
 
@@ -63,6 +56,8 @@ def build(force=False):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         sys.exit("Build failed:\n" + result.stderr)
+    if result.stderr.strip():
+        print(result.stderr, file=sys.stderr)
     return OUT
 
 
