@@ -247,7 +247,7 @@ Keep stop-and-wait acknowledgements; acknowledge RESET before resetting. Measure
 
 | ID | Direction | Meaning |
 | --- | --- | --- |
-| `0x600` | PC -> bootloader | Programming commands |
+| `0x602` | PC -> bootloader | Programming commands |
 | `0x580` | Bootloader -> PC | ACK/status |
 | `0x601` | PC -> application | `ENTER_BOOT.BCI_BOOT=1` |
 | `0x581` | Bootloader -> other boards | `BCI_BOOT_HEARTBEAT`: `0x55`, millisecond tick and mandatory bootloader version |
@@ -367,7 +367,7 @@ Script sends one standard frame on `0x601`, DLC 8:
 01 00 00 00 00 00 00 00
 ```
 
-`BCI_BOOT` is unsigned Intel bit 0, length 1, factor 1, offset 0, range 0-1. **Application** must start CAN at matching rate and accept this ID. Bootloader's `0x600` filter does not provide an application handler.
+`BCI_BOOT` is unsigned Intel bit 0, length 1, factor 1, offset 0, range 0-1. **Application** must start CAN at matching rate and accept this ID. Bootloader's `0x602` filter does not provide an application handler.
 
 Copy generated `Core/Inc/bootloader.h` and `Core/Src/bootloader.c` into the application and compile the source. For a bxCAN application, put this in the receive loop after CAN initialization/start:
 

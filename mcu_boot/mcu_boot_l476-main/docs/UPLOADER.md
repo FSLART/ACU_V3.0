@@ -14,7 +14,7 @@ After the one-time setup:
 
 Replace the quoted path and COM port with yours. The input must be an **application** built for the correct application address, not this bootloader's binary.
 
-For current L476 setup: application vectors at **`0x08010200`**, CAN **250 kbit/s**, one target, IDs `0x600`, `0x580` and `0x601`. For another MCU, first adapt the [porting guide](PORTING.md#step-8--adapt-the-python-target-assumptions) settings.
+For current L476 setup: application vectors at **`0x08010200`**, CAN **250 kbit/s**, one target, IDs `0x602`, `0x580` and `0x601`. For another MCU, first adapt the [porting guide](PORTING.md#step-8--adapt-the-python-target-assumptions) settings.
 
 ## 1 — One-time setup
 
@@ -137,7 +137,7 @@ On startup, UART prints which physical bank will run. Observe the application's 
 1. Read and validate the input; package raw firmware if needed.
 2. Open the adapter at the configured bitrate.
 3. Send `ENTER_BOOT.BCI_BOOT=1` on `0x601` once.
-4. Poll INFO on `0x600`, accepting matching replies on `0x580`.
+4. Poll INFO on `0x602`, accepting matching replies on `0x580`.
 5. Read the device maximum and reject a larger packaged image before BEGIN.
 6. Send BEGIN with packaged length and wait for inactive-slot preparation.
 7. Send four payload bytes per DATA frame, each with a 24-bit byte offset. Wait for its matching accepted-count ACK before advancing.
@@ -184,7 +184,7 @@ If transfer was interrupted, reset/enter the bootloader and run the command agai
 
 ## Sharing a CAN bus
 
-Other CAN traffic is supported, but reserve **`0x600`, `0x601` and `0x580`–`0x589`**. Only one active target may use these fixed IDs. Same-ID traffic can be mistaken for a command/reply; there is no node addressing or authentication.
+Other CAN traffic is supported, but reserve **`0x602`, `0x601` and `0x580`–`0x589`**. Only one active target may use these fixed IDs. Same-ID traffic can be mistaken for a command/reply; there is no node addressing or authentication.
 
 The bootloader sends heartbeat `0x581` with tick/version plus structured diagnostics `0x582`–`0x589`; the uploader ignores those frames and waits for command replies on `0x580`. Heartbeat pauses can occur during flash operations.
 
@@ -194,7 +194,7 @@ A busy bus can slow programming or trigger timeouts because every DATA frame wai
 
 | Script location | Current assumption |
 | --- | --- |
-| `docs/bootloader.dbc` | IDs/layout loaded by cantools: `0x600`, `0x580`, `0x601` |
+| `docs/bootloader.dbc` | IDs/layout loaded by cantools: `0x602`, `0x580`, `0x601` |
 | `can.Bus()` | 250 kbit/s, default SLCAN |
 | `prepare_image()` | L476 RAM ranges, logical vectors `0x08010200`, 456704-byte packaged limit |
 | Header construction / `check_image()` | 512-byte header, no protected TLVs/flags; SHA-only raw wrapper |

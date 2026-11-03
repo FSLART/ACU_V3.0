@@ -34,7 +34,7 @@ python -m venv .venv
 
 The script creates `CubeIDE_application.mcuboot.bin` beside the input, adding a 512-byte MCUboot header (version 1.0.0) and a SHA-256 TLV, then uploads that converted image. It also accepts already packaged, unpadded MCUboot images. The programming progress bar displays acknowledged bytes and reaches 100% at the end of transfer; validation/commit is a separate step reported afterward. Reset activates the new bank.
 
-The default adapter interface is SLCAN, with classic CAN at **250 kbit/s**, request ID `0x600` and reply ID `0x580`. For SocketCAN use `--interface socketcan --channel can0` with a preconfigured 250 kbit/s interface. Only connect one target using these fixed IDs.
+The default adapter interface is SLCAN, with classic CAN at **250 kbit/s**, request ID `0x602` and reply ID `0x580`. For SocketCAN use `--interface socketcan --channel can0` with a preconfigured 250 kbit/s interface. Only connect one target using these fixed IDs.
 
 The uploader first sends `ENTER_BOOT` on CAN ID `0x601` with `BCI_BOOT=1`. The running application must handle that frame by setting the RAM bootloader request and resetting. If it lacks that handler, hold the PCB B1 button during manual reset to stay in the bootloader. The current PCB behavior is treated as **active-low**: pressed reads PC13 low. Release it after upload so the application can start. A RAM request of `0xB00710AD` at `0x20017FFC` also keeps the bootloader active until reset; the request is consumed once. If neither image is valid, it waits for recovery uploads without needing the button.
 

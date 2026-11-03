@@ -1,6 +1,6 @@
 # CAN upload protocol, version 1
 
-This project-specific protocol transports an MCUboot image. It is not an upstream MCUboot serial recovery protocol. Classic CAN, 250 kbit/s, standard 11-bit data frames, DLC 8 only. Request ID: `0x600`; response ID: `0x580`. One uploader and one target share these fixed IDs. Integers are little-endian.
+This project-specific protocol transports an MCUboot image. It is not an upstream MCUboot serial recovery protocol. Classic CAN, 250 kbit/s, standard 11-bit data frames, DLC 8 only. Request ID: `0x602` (moved from `0x600`, which is `VCU_IGN_R2D` on the T26 autonomous bus); response ID: `0x580`. One uploader and one target share these fixed IDs. Integers are little-endian.
 
 The [DBC file](bootloader.dbc) defines programming, entry and heartbeat frames, multiplexed request payloads, and command/status/state labels. Response `ValueBytes` means maximum upload size for INFO and accepted byte count for every other command.
 
@@ -141,7 +141,7 @@ Startup and INFO request a snapshot of currently applicable fields. Selection/ro
 
 Source: 1 validation, 2 upload, 3 flash driver, 4 CAN, 5 boot. Command 255 means startup/no command; 0-4 are the existing commands. `0x588` accompanies a flash-driver error with its raw HAL detail. Add `FLASH_BASE_ADDRESS` to a device-relative offset to obtain the physical address before application bank remapping. Rejected generation/version are diagnostic metadata, not anti-rollback authorization.
 
-Reserve IDs `0x580`–`0x589`, `0x600` and `0x601` for one target using this protocol. No node addressing is added by these diagnostics.
+Reserve IDs `0x580`–`0x589`, `0x601` and `0x602` for one target using this protocol. No node addressing is added by these diagnostics.
 
 ## Requests
 
