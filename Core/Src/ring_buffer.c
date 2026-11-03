@@ -6,6 +6,7 @@
  */
 
 #include "ring_buffer.h"
+#include "can.h"
 
 
 void can_buffer_init(struct ring *ring_buffer) {
@@ -43,31 +44,27 @@ void can_rx_buffer_push(struct ring *ring_buffer, CAN_RxHeaderTypeDef  tx_header
 	ring_buffer->head = (ring_buffer->head + 1) % MAX_SIZE;
 }
 
-void can_buffer_pop(struct ring *ring_buffer, uint8_t tx_or_rx,struct can_queue *can_rx) {
+/* Returns 1 if an entry was consumed. */
+uint8_t can_buffer_pop(struct ring *ring_buffer, uint8_t tx_or_rx,struct can_queue *can_rx) {
 	if (ring_buffer->counter == 0) {
-		return;
+		return 0;
 	}
 
-	uint32_t mailbox;
-	HAL_StatusTypeDef result = HAL_ERROR;
-
 	if(tx_or_rx){
-		if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) > 0) {
-			result = HAL_CAN_AddTxMessage(&hcan1,
-					&ring_buffer->queue[ring_buffer->tail].can_tx_header,
-					ring_buffer->queue[ring_buffer->tail].tx_data, &mailbox);
-		}
-		if(result == HAL_OK){
-			ring_buffer->tail = (ring_buffer->tail + 1) % MAX_SIZE;
-			ring_buffer->counter--;
+		if (CAN_Send(&hcan1, &ring_buffer->queue[ring_buffer->tail].can_tx_header,
+				ring_buffer->queue[ring_buffer->tail].tx_data) != HAL_OK) {
+			return 0;
 		}
 	}else {
 		memcpy(can_rx, &ring_buffer->queue[ring_buffer->tail], sizeof(ring_buffer->queue[ring_buffer->tail]));
         memset(&ring_buffer->queue[ring_buffer->tail], 0, sizeof(ring_buffer->queue[ring_buffer->tail]));
-        ring_buffer->tail = (ring_buffer->tail + 1) % MAX_SIZE;
-        ring_buffer->counter--;
     }
 
-
-
+	/* push() runs in interrupt context; its counter++ must not land between this read and write */
+	uint32_t primask = __get_PRIMASK();
+	__disable_irq();
+	ring_buffer->tail = (ring_buffer->tail + 1) % MAX_SIZE;
+	ring_buffer->counter--;
+	__set_PRIMASK(primask);
+	return 1;
 }

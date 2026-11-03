@@ -1,5 +1,10 @@
 # BLE GATT Profile — ACU v3 Telemetry
 
+> **Superseded.** The ACU no longer sends the binary frame below. It sends plain text over the
+> RN4871 transparent UART (USART1), readable in any BLE serial terminal: one line whenever a key
+> state changes, and a status block every second. Phone commands: `stop`, `start`, `flush`.
+> See `Core/Src/ble_handler.c`.
+
 ## Overview
 The ACU v3 transmits a 15-byte binary frame at 10 Hz over a custom BLE GATT service using an RN4871 module.
 

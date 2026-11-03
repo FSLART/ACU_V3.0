@@ -20,6 +20,7 @@ void Handle_state(uint8_t prev_asms_state);
 void Handle_autonomous_state();
 void Handle_Emergency();
 void toggle_wdt();
+void update_ignition_request(void);
 
 
 

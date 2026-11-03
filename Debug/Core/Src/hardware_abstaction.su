@@ -1,7 +1,0 @@
-../Core/Src/hardware_abstaction.c:20:10:millis	8	static
-../Core/Src/hardware_abstaction.c:36:6:Peripheral_aquisition	24	static
-../Core/Src/hardware_abstaction.c:50:6:Peripheral_actuation	8	static
-../Core/Src/hardware_abstaction.c:68:6:handle_can_tx	8	static
-../Core/Src/hardware_abstaction.c:83:6:add_can_message	24	static
-../Core/Src/hardware_abstaction.c:95:6:handle_uart_logs	56	static
-../Core/Src/hardware_abstaction.c:114:6:LED_indicator_controller	8	static
