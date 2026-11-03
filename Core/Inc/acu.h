@@ -111,6 +111,7 @@ typedef enum {
 	FAULT_CHECKUP_REAR_BRAKE,
 	FAULT_CHECKUP_BOTH_BRAKES,
 	/* continuous monitoring, T 15.3.2 */
+	FAULT_RES_STOP,
 	FAULT_SDC_OPENED,
 	FAULT_ASMS_SWITCHED_OFF,
 	FAULT_VCU_TIMEOUT,
@@ -175,8 +176,11 @@ typedef struct {
 } jetson_t;
 
 typedef struct {
-	uint8_t payload[8];        /* last RES frame, raw: watch it here to find the stop/go bits */
-	uint8_t length;
+	uint8_t signal;            /* RES.SIGNAL (0x191) as received */
+	bool stop_pressed;         /* emergency stop: the RES opened the SDC */
+	bool go_pressed;
+	uint8_t pdo_payload[8];    /* last 0x18B frame, raw */
+	uint8_t pdo_length;
 } res_t;
 
 typedef struct {
@@ -247,6 +251,8 @@ typedef struct {
 typedef struct {
 	bool active;                 /* ACU in EMERGENCY because of `reason` */
 	fault_reason_t reason;       /* first fault, the one that caused the EMERGENCY */
+	fault_reason_t detected_as;  /* what was seen first; differs when a RES stop is found to be the cause */
+	bool logged;                 /* sent to the logger once the reason settled (FAULT_SETTLE_MS) */
 	uint32_t since_ms;
 	fault_reason_t last_reason;  /* reason of the last EMERGENCY, kept after leaving it */
 	uint32_t count;              /* emergencies since boot */

@@ -157,9 +157,10 @@ class Plant(ctypes.Structure):
         ("res_alive", ctypes.c_int32), ("steering_alive", ctypes.c_int32),
         ("front_brake_alive", ctypes.c_int32), ("rear_brake_alive", ctypes.c_int32),
         ("jetson_as_state", ctypes.c_int32), ("jetson_mission", ctypes.c_int32),
+        ("res_stop_pressed", ctypes.c_int32), ("res_go_pressed", ctypes.c_int32),
         ("front_brake_bar", ctypes.c_float), ("rear_brake_bar", ctypes.c_float),
         ("ts_active", ctypes.c_int32), ("sdc_closed", ctypes.c_int32), ("precharge_ms", ctypes.c_int32),
-        ("last_pulse_ms", ctypes.c_uint32), ("pulse_changes", ctypes.c_uint32),
+        ("last_pulse_ms", ctypes.c_uint32), ("pulse_changes", ctypes.c_uint32), ("r2d", ctypes.c_int32),
     ]
 
 
@@ -184,7 +185,7 @@ class LogRecord(ctypes.Structure):
         ("event", ctypes.c_uint8), ("reason", ctypes.c_uint8), ("mode", ctypes.c_uint8),
         ("as_state", ctypes.c_uint8), ("checkup_step", ctypes.c_uint8), ("mission", ctypes.c_uint8),
         ("sdc_closed", ctypes.c_uint8), ("asms_on", ctypes.c_uint8), ("ts_active", ctypes.c_uint8),
-        ("spare", ctypes.c_uint8),
+        ("detected_as", ctypes.c_uint8),
     ]
 
 

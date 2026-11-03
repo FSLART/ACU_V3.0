@@ -296,6 +296,8 @@ typedef struct {
 	int32_t rear_brake_alive;
 	int32_t jetson_as_state;
 	int32_t jetson_mission;
+	int32_t res_stop_pressed;     /* RES emergency stop pressed (opens the SDC) */
+	int32_t res_go_pressed;
 	/* plant state, read from Python */
 	float front_brake_bar;
 	float rear_brake_bar;
@@ -304,6 +306,7 @@ typedef struct {
 	int32_t precharge_ms;
 	uint32_t last_pulse_ms;
 	uint32_t pulse_changes;
+	int32_t r2d;                 /* VCU in R2D: entered on ACU AS Driving, left with the TS off */
 } sim_plant_t;
 
 SIM_API sim_plant_t sim_plant;
@@ -399,7 +402,7 @@ static void plant_step(void) {
 		p->last_pulse_ms = now_ms;
 	}
 	int pulsing = now_ms - p->last_pulse_ms <= (uint32_t)p->watchdog_timeout_ms && p->pulse_changes > 0;
-	p->sdc_closed = p->sdc_chain_closed && (pulsing || p->watchdog_stuck_closed);
+	p->sdc_closed = p->sdc_chain_closed && !p->res_stop_pressed && (pulsing || p->watchdog_stuck_closed);
 	set_pin_level("SDC_FEEDBACK", p->sdc_closed ? 0 : 1); /* active low */
 
 	/* VCU: TS on after precharge while the ACU asks for it and the SDC is closed */
@@ -414,6 +417,9 @@ static void plant_step(void) {
 	} else if (!p->ts_active && ++p->precharge_ms >= p->vcu_precharge_ms) {
 		p->ts_active = 1;
 	}
+
+	/* VCU R2D follows the ACU AS state (seen on the car) and ends with the TS */
+	p->r2d = p->ts_active && (p->r2d || acu.as.state == AS_STATE_DRIVING);
 
 	/* EBS: a de-energised solenoid (or no actuator power with the ASMS off) applies the brake */
 	int asms_on = pin_level("ASMS");
@@ -440,12 +446,17 @@ static void plant_step(void) {
 	if (p->vcu_alive && now_ms % 20 == 7) {
 		rx_vcu();
 	}
-	if (p->vcu_rpm_alive && now_ms % 20 == 9) {
+	if (p->vcu_rpm_alive && p->r2d && now_ms % 10 == 9) { /* the VCU sends VCU_RPM only in R2D */
 		rx_rpm();
 	}
 	if (p->res_alive && now_ms % 50 == 13) {
 		uint8_t data[8] = { 0 };
 		rx(RES_PDO_FRAME_ID, 0, data, 8);
+	}
+	if (p->res_alive && now_ms % 30 == 17) {
+		uint8_t data[8] = { 0 };
+		data[0] = (p->res_stop_pressed ? 0 : RES_SIGNAL_RUN_BIT) | (p->res_go_pressed ? RES_SIGNAL_GO_BIT : 0);
+		rx(AUTONOMOUS_T26_RES_FRAME_ID, 0, data, 8);
 	}
 }
 

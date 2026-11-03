@@ -311,7 +311,7 @@ class TestCheckupFails(AcuTest):
             self.w.run_until(lambda w: w.state.checkup_step == "CHECKUP_TS_ACTIVATION" or w.state.fault_active, 10000)
             self.w.press_ign()
         self.assertTrue(self.run_until_fault(20000), self.w.log())
-        self.w.run(5)
+        self.w.run(CONFIG["FAULT_SETTLE_MS"] + 5)
         self.assert_emergency(reason, as_state="AS_STATE_OFF")
         self.assertEqual(self.w.state.checkup_step, "CHECKUP_FAILED")
         self.w.run(200)
@@ -355,6 +355,10 @@ class TestCheckupFails(AcuTest):
     def test_sdc_opens_during_ts_activation(self):
         self.fail_checkup("FAULT_CHECKUP_SDC_OPENED", "SDC_OPEN", press_ign=False,
                           during=("CHECKUP_TS_ACTIVATION", lambda p: setattr(p, "sdc_chain_closed", 0)))
+
+    def test_res_stop_during_the_checkup(self):
+        self.fail_checkup("FAULT_RES_STOP", "RES", press_ign=False,
+                          during=("CHECKUP_TS_ACTIVATION", lambda p: setattr(p, "res_stop_pressed", 1)))
 
     def test_front_circuit_too_weak(self):
         self.fail_checkup("FAULT_CHECKUP_FRONT_BRAKE", "PRESSURE_CHECKS",
@@ -467,6 +471,7 @@ class TestMonitoring(AcuTest):
     """T 15.3.2 in AS Ready and AS Driving: fault -> AS Emergency, EBS engaged, SDC open."""
 
     CASES = {
+        "res_stop": ("FAULT_RES_STOP", "RES", lambda w: setattr(w.plant, "res_stop_pressed", 1), 60),
         "sdc_opens": ("FAULT_SDC_OPENED", "SDC_OPEN", lambda w: setattr(w.plant, "sdc_chain_closed", 0), 50),
         "asms_off": ("FAULT_ASMS_SWITCHED_OFF", "SDC_OPEN", lambda w: w.set_asms(False), 50),
         "vcu_silent": ("FAULT_VCU_TIMEOUT", "VCU_TIMEOUT", lambda w: setattr(w.plant, "vcu_alive", 0), 1200),
@@ -485,6 +490,7 @@ class TestMonitoring(AcuTest):
             self.w.run(3500)
         trigger(self.w)
         self.assertTrue(self.run_until_fault(within_ms), f"{name}: no fault\n" + self.w.log())
+        self.w.run(CONFIG["FAULT_SETTLE_MS"] + 5)
         self.assert_emergency(reason)
         self.assertTrue(self.w.state.ebs_activated)
         self.w.run(300)
@@ -645,13 +651,75 @@ class TestFinish(AcuTest):
         self.w.run(3000)
         self.assertEqual(self.w.state.as_state, "AS_STATE_FINISHED")
 
+    def test_res_stop_is_logged_as_res_stop_even_when_the_sdc_opens_first(self):
+        """On the car the RES stop opened the SDC and drained the tanks before or with its own frame."""
+        self.w.plant.res_stop_pressed = 1  # opens the SDC now, the RES frame comes up to 30 ms later
+        self.assertTrue(self.run_until_fault(100))
+        self.w.run(CONFIG["FAULT_SETTLE_MS"] + 50)
+        self.assert_emergency("FAULT_RES_STOP")
+        record = self.w.acu.log_records()[-1]
+        self.assertEqual(record.reason, FAULT["FAULT_RES_STOP"])
+
+    def test_res_stop_after_the_finish_is_an_emergency(self):
+        """Figure 16: EBS activated, finished, standstill, SDC opened at the RES -> AS Emergency."""
+        self.assertTrue(self.finish())
+        self.w.run(1000)
+        self.w.plant.res_stop_pressed = 1
+        self.assertTrue(self.run_until_fault(100))
+        self.assert_emergency("FAULT_RES_STOP")
+        self.w.run(200)
+        self.assertEqual(self.w.acu.acu_frame().emergency_cause, CAN_CAUSE["RES"])
+
 
 class TestFinishFromReady(AcuTest):
     def test_finished_without_driving(self):
+        """No VCU_RPM before R2D (as on the car), but the EBS holds the car: at standstill."""
         self.ok(self.w.start_to_ready())
         self.w.run(500)
+        self.assertFalse(self.w.state.speed_known)
         self.w.jetson("FINISHED")
         self.assertTrue(self.w.run_until(lambda w: w.state.as_state == "AS_STATE_FINISHED", 1000))
+
+
+class TestRealRun(AcuTest):
+    """Replays the Jetson, RES and motor speed of the 2026-10-31 17:40:45 trackdrive run
+    (tests/host/fixtures) from the moment the ACU reached AS Ready."""
+
+    def test_trackdrive_2026_10_31_17_40_45(self):
+        import json
+        from pathlib import Path
+        run = json.load(open(Path(__file__).parent / "fixtures" / "run_2026-10-31_17-40-45.json"))
+        ref = run["acu_reference"]
+        self.ok(self.w.start_to_ready("TRACKDRIVE"))
+        p = self.w.plant
+        p.jetson_alive = p.res_alive = p.vcu_rpm_alive = 0  # from here on these come from the bag
+        start = self.w.now
+        events = iter(run["events"])
+        event = next(events)
+        driving_at = fault_at = None
+        while self.w.now - start < ref["res_stop_ms"] + 1000:
+            while event and event[0] <= self.w.now - start:
+                kind = event[1]
+                if kind == "jetson":
+                    self.w.acu.can_rx(0x61, bytes([event[2] + 16 * event[3], 0, 0, 0, 0]))
+                elif kind == "res":
+                    self.w.acu.can_rx(0x191, bytes([event[2]]) + bytes(7))
+                else:
+                    self.w.acu.can_rx(0x509, event[2].to_bytes(2, "little") + event[3].to_bytes(2, "little") + bytes(4))
+                event = next(events, None)
+            self.w.step()
+            s = self.w.state
+            if driving_at is None and s.as_state == "AS_STATE_DRIVING":
+                driving_at = self.w.now - start
+            if fault_at is None and s.fault_active:
+                fault_at = self.w.now - start
+        # The ACU follows the Jetson to AS Driving (it waited 8.7 s in Ready), the car starts
+        # moving 3.3 s later (T 14.8.5 respected), and the RES stop is logged as such.
+        self.assertAlmostEqual(driving_at, ref["jetson_driving_ms"], delta=20)
+        self.assertAlmostEqual(fault_at, ref["res_stop_ms"], delta=20)
+        self.assert_emergency("FAULT_RES_STOP")
+        self.assertEqual(self.w.acu.acu_frame().emergency_cause, CAN_CAUSE["RES"])
+        self.assertNotEqual(ref["old_acu_emergency_cause"], CAN_CAUSE["RES"])  # the old firmware logged "Pressure_checks"
 
 
 class TestEmergencyExit(AcuTest):
@@ -699,7 +767,7 @@ class TestFaultLog(AcuTest):
         self.ok(self.w.start_to_ready())
         self.w.plant.sdc_chain_closed = 0
         self.run_until_fault(100)
-        self.w.run(100)
+        self.w.run(300)
         record = self.w.acu.log_records()[-1]
         self.assertEqual(record.reason, FAULT["FAULT_SDC_OPENED"])
         self.assertEqual(ENUMS["acu_mode_t"][record.mode], "ACU_MODE_AUTONOMOUS")
@@ -712,7 +780,7 @@ class TestFaultLog(AcuTest):
         self.w.plant.front_tank_bar = 4.0
         self.w.start_checkup()
         self.run_until_fault(100)
-        self.w.run(100)
+        self.w.run(300)
         eeprom = self.w.acu.eeprom()
         self.w.close()
         self.w = World(eeprom=eeprom)

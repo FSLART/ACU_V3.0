@@ -146,6 +146,7 @@ class App(tk.Tk):
                    ).pack(anchor="w")
         combo("mission (both)", "mission", missions, lambda m: self.world.set_mission(m))
         check("brakes released by hand", "brakes_released_by_hand", plant("brakes_released_by_hand"))
+        check("RES emergency stop", "res_stop_pressed", plant("res_stop_pressed"))
 
         section("Jetson")
         check("alive", "jetson_alive", plant("jetson_alive"))

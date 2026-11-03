@@ -48,11 +48,11 @@ typedef struct {
 	uint8_t sdc_closed;
 	uint8_t asms_on;
 	uint8_t ts_active;
-	uint8_t spare;
+	uint8_t detected_as;          /* fault_reason_t first seen (RES stop attribution) */
 } log_record_t;                  /* 36 bytes */
 
 /* Control task */
-void logger_log_fault(uint32_t now_ms);
+void logger_log_fault(void);
 
 /* Logger task, at boot: a crash saved by the previous run (stack overflow, HardFault, ...) */
 void logger_log_crash(uint8_t reason, uint32_t detail);

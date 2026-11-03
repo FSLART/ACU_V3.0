@@ -42,7 +42,12 @@ void as_reset(uint32_t now_ms) {
 	set_state(AS_STATE_OFF, now_ms);
 }
 
+/* Before R2D the EBS holds the car. The VCU only sends VCU_RPM in R2D (seen on the car), so the
+ * speed is unknown then, but the car is parked. */
 bool as_vehicle_at_standstill(void) {
+	if (!acu.as.flowchart.r2d) {
+		return true;
+	}
 	return acu.as.speed_known && !acu.as.moving;
 }
 
@@ -114,7 +119,9 @@ static void update_finish(uint32_t now_ms) {
 		}
 		break;
 	case FINISH_EBS_ACTIVATED:
-		if (acu.vcu.ts_active && time_elapsed(acu.as.finish_since_ms, now_ms, FINISH_TS_OFF_TIMEOUT_MS)) {
+		if (acu.res.stop_pressed) {
+			fault_raise(FAULT_RES_STOP, now_ms); /* Figure 16: SDC opened at the RES -> AS Emergency */
+		} else if (acu.vcu.ts_active && time_elapsed(acu.as.finish_since_ms, now_ms, FINISH_TS_OFF_TIMEOUT_MS)) {
 			fault_raise(FAULT_TS_STILL_ON_AFTER_FINISH, now_ms);
 		}
 		break;
@@ -157,7 +164,7 @@ void as_update(uint32_t now_ms) {
 	f->mission_finished = acu.as.finish != FINISH_NOT_FINISHED;
 	/* In AS Finished the EBS holds the car: still at standstill if VCU_RPM stops with the TS off. */
 	f->vehicle_at_standstill = as_vehicle_at_standstill() || (acu.as.state == AS_STATE_FINISHED && !acu.as.moving);
-	f->sdc_opened_by_res = false; /* RES stop bit not decoded yet: watch acu.res.payload to find it */
+	f->sdc_opened_by_res = acu.res.stop_pressed;
 	f->mission_selected = acu.mission.selected != MISSION_MANUAL;
 	f->asms_on = acu.inputs.asms_on;
 	f->asb_checks_ok = checkup_passed();

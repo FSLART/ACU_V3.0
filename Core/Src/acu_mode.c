@@ -75,6 +75,7 @@ void acu_mode_update(uint32_t now_ms) {
 
 	monitoring_update(now_ms);
 	as_update(now_ms);
+	fault_update(now_ms);
 
 	if (acu.fault.active && acu.mode != ACU_MODE_EMERGENCY) {
 		enter(ACU_MODE_EMERGENCY, now_ms);

@@ -60,7 +60,13 @@ static void check_brake_circuit(bool skip, bool pressures_as_expected, checkup_s
 
 void checkup_update(uint32_t now_ms) {
 	uint32_t since = acu.checkup.step_since_ms;
+	bool running = acu.checkup.step != CHECKUP_NOT_STARTED && acu.checkup.step != CHECKUP_PASSED
+			&& acu.checkup.step != CHECKUP_FAILED;
 
+	if (running && acu.res.stop_pressed) {
+		fail(FAULT_RES_STOP, now_ms);
+		return;
+	}
 	if (sdc_must_be_closed() && !acu.inputs.sdc_closed) {
 		fail(FAULT_CHECKUP_SDC_OPENED, now_ms);
 		return;

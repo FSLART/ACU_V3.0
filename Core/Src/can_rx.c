@@ -85,9 +85,20 @@ static void handle_slam_stats(const can_frame_t *frame) {
 	acu.jetson.cones_count_all = (uint32_t)autonomous_t26_slam_stats_can_cones_count_all_decode(msg.cones_count_all);
 }
 
-static void handle_res(const can_frame_t *frame, uint32_t now_ms) {
-	memcpy(acu.res.payload, frame->data, sizeof(acu.res.payload));
-	acu.res.length = frame->length;
+static void handle_res_status(const can_frame_t *frame, uint32_t now_ms) {
+	struct autonomous_t26_res_t msg;
+	if (autonomous_t26_res_unpack(&msg, frame->data, frame->length) != 0) {
+		return;
+	}
+	acu.res.signal = (uint8_t)autonomous_t26_res_signal_decode(msg.signal);
+	acu.res.stop_pressed = (acu.res.signal & RES_SIGNAL_RUN_BIT) == 0;
+	acu.res.go_pressed = (acu.res.signal & RES_SIGNAL_GO_BIT) != 0;
+	node_heard(&acu.nodes.res, now_ms);
+}
+
+static void handle_res_pdo(const can_frame_t *frame, uint32_t now_ms) {
+	memcpy(acu.res.pdo_payload, frame->data, sizeof(acu.res.pdo_payload));
+	acu.res.pdo_length = frame->length;
 	node_heard(&acu.nodes.res, now_ms);
 }
 
@@ -124,8 +135,11 @@ void can_rx_handle_frame(const can_frame_t *frame, uint32_t now_ms) {
 	case AUTONOMOUS_T26_SLAM_STATS_CAN_FRAME_ID:
 		handle_slam_stats(frame);
 		break;
+	case AUTONOMOUS_T26_RES_FRAME_ID:
+		handle_res_status(frame, now_ms);
+		break;
 	case RES_PDO_FRAME_ID:
-		handle_res(frame, now_ms);
+		handle_res_pdo(frame, now_ms);
 		break;
 	case BOOTLOADER_ENTER_FRAME_ID:
 		handle_bootloader_entry(frame);

@@ -68,6 +68,7 @@
 #define MISSION_MISMATCH_TIMEOUT_MS  1000  /* Jetson mission != selected mission for this long */
 #define TS_LOST_DEBOUNCE_MS          300   /* TS off during AS Ready/Driving for this long */
 #define BRAKE_RELEASE_CONFIRM_MS     500   /* T 14.8.2: brakes released this long ends "EBS activated" */
+#define FAULT_SETTLE_MS              100   /* reason open this long before it is logged (RES frame every ~30 ms) */
 
 /* ── Outputs ─────────────────────────────────────────────────────────────────── */
 #define WATCHDOG_PULSE_PERIOD_MS  10    /* external watchdog opens the SDC ~100 ms after the last pulse */
@@ -78,7 +79,12 @@
 /* ── CAN ─────────────────────────────────────────────────────────────────────── */
 #define CAN_TX_PERIOD_MS          100   /* ACU, DV_status and ASF_SIGNALS frames */
 #define CAN_SERVICE_PERIOD_MS     10
-#define RES_PDO_FRAME_ID          0x18B /* RES status, used for the timeout. The DBC lists 0x191. */
+#define RES_PDO_FRAME_ID          0x18B /* RES frame the ACU always used for the timeout (both IDs count) */
+
+/* RES status, autonomous_t26.dbc RES (0x191) byte 0. Seen on the car on 2026-10-31:
+ * 1 = running, 5 = GO pressed, 0 = emergency stop pressed. */
+#define RES_SIGNAL_RUN_BIT        0x01  /* cleared: emergency stop, the RES opened the SDC */
+#define RES_SIGNAL_GO_BIT         0x04
 #define CANOPEN_NMT_FRAME_ID      0x000 /* [0x01, 0x00] = start all nodes: wakes the RES up */
 
 /* CAN programming (bootloader, see mcu_boot/.../docs/CAN_PROTOCOL.md).

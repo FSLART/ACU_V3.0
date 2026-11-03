@@ -32,6 +32,7 @@ static const fault_info_t fault_table[FAULT_COUNT] = {
 	[FAULT_CHECKUP_BOTH_BRAKES] = { "CHECKUP_BOTH_BRAKES",
 		"arranque: os dois circuitos EBS juntos falharam", CAN_CAUSE_PRESSURE_CHECKS },
 
+	[FAULT_RES_STOP] = { "RES_STOP", "RES: botao de emergencia premido", CAN_CAUSE_RES },
 	[FAULT_SDC_OPENED] = { "SDC_OPENED", "SDC abriu em AS Ready/Driving", CAN_CAUSE_SDC_OPEN },
 	[FAULT_ASMS_SWITCHED_OFF] = { "ASMS_SWITCHED_OFF", "ASMS desligado em AS Ready/Driving", CAN_CAUSE_SDC_OPEN },
 	[FAULT_VCU_TIMEOUT] = { "VCU_TIMEOUT", "VCU calado (VCU_IGN_R2D)", CAN_CAUSE_VCU_TIMEOUT },
@@ -72,6 +73,8 @@ void fault_raise(fault_reason_t reason, uint32_t now_ms) {
 	acu.fault.last_reason = reason;
 	acu.fault.active = true;
 	acu.fault.reason = reason;
+	acu.fault.detected_as = reason;
+	acu.fault.logged = false;
 	acu.fault.since_ms = now_ms;
 	acu.fault.mode = acu.mode;
 	acu.fault.as_state = acu.as.state;
@@ -83,10 +86,45 @@ void fault_raise(fault_reason_t reason, uint32_t now_ms) {
 	acu.fault.sdc_closed = acu.inputs.sdc_closed;
 	acu.fault.asms_on = acu.inputs.asms_on;
 	acu.fault.ts_active = acu.vcu.ts_active;
-	logger_log_fault(now_ms);
+}
+
+/* What a RES stop also causes: it opens the SDC, drains the EBS tanks and makes the Jetson report
+ * EMERGENCY, and the RES frame can arrive after any of these is seen. */
+static bool can_be_caused_by_res_stop(fault_reason_t reason) {
+	switch (reason) {
+	case FAULT_SDC_OPENED:
+	case FAULT_CHECKUP_SDC_OPENED:
+	case FAULT_TANK_PRESSURE:
+	case FAULT_BRAKE_PRESSURE_LOST:
+	case FAULT_TS_DEACTIVATED:
+	case FAULT_JETSON_EMERGENCY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/* The reaction to a fault is immediate; only its reason waits FAULT_SETTLE_MS before it is logged,
+ * so a RES stop is logged as the RES stop and not as what it caused. */
+void fault_update(uint32_t now_ms) {
+	if (!acu.fault.active || acu.fault.logged) {
+		return;
+	}
+	if (acu.res.stop_pressed && can_be_caused_by_res_stop(acu.fault.reason)) {
+		acu.fault.reason = FAULT_RES_STOP;
+		acu.fault.last_reason = FAULT_RES_STOP;
+	}
+	if (time_elapsed(acu.fault.since_ms, now_ms, FAULT_SETTLE_MS)) {
+		acu.fault.logged = true;
+		logger_log_fault();
+	}
 }
 
 void fault_clear(void) {
+	if (acu.fault.active && !acu.fault.logged) {
+		acu.fault.logged = true;
+		logger_log_fault(); /* left EMERGENCY before the reason settled: log what we have */
+	}
 	acu.fault.active = false;
 	acu.fault.reason = FAULT_NONE;
 }

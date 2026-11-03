@@ -2,7 +2,8 @@
  * faults.h
  *
  * The single way into EMERGENCY: any module that finds a problem calls fault_raise().
- * The first reason is latched with a snapshot of the car and sent to the logger.
+ * The first reason is latched with a snapshot of the car, settled for FAULT_SETTLE_MS (a RES stop
+ * can show up first as its consequences) and then sent to the logger.
  */
 #ifndef FAULTS_H
 #define FAULTS_H
@@ -10,6 +11,7 @@
 #include "acu.h"
 
 void fault_raise(fault_reason_t reason, uint32_t now_ms);
+void fault_update(uint32_t now_ms);
 void fault_clear(void);
 
 const char *fault_name(fault_reason_t reason);

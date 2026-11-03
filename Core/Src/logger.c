@@ -34,9 +34,9 @@ static void queue_push(const log_record_t *record) {
 	queue_write = next;
 }
 
-void logger_log_fault(uint32_t now_ms) {
+void logger_log_fault(void) {
 	log_record_t record = {
-		.uptime_ms = now_ms,
+		.uptime_ms = acu.fault.since_ms,
 		.front_tank_bar = acu.fault.front_tank_bar,
 		.rear_tank_bar = acu.fault.rear_tank_bar,
 		.front_brake_bar = acu.fault.front_brake_bar,
@@ -44,6 +44,7 @@ void logger_log_fault(uint32_t now_ms) {
 		.boot_number = header.boot_number,
 		.event = LOG_EVENT_FAULT,
 		.reason = (uint8_t)acu.fault.reason,
+		.detected_as = (uint8_t)acu.fault.detected_as,
 		.mode = (uint8_t)acu.fault.mode,
 		.as_state = (uint8_t)acu.fault.as_state,
 		.checkup_step = (uint8_t)acu.fault.checkup_step,

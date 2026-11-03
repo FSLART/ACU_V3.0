@@ -33,6 +33,10 @@ static bool moved_too_early(void) {
 }
 
 static fault_reason_t find_fault(uint32_t now_ms) {
+	/* First: the RES stop also opens the SDC and drains the EBS tanks, so it would show up as those. */
+	if (acu.res.stop_pressed) {
+		return FAULT_RES_STOP;
+	}
 	if (!acu.inputs.asms_on) {
 		return FAULT_ASMS_SWITCHED_OFF;
 	}

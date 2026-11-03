@@ -313,7 +313,10 @@ static bool send_status(uint32_t now_ms) {
 			(unsigned long)acu.nodes.res.age_ms, (unsigned long)acu.nodes.vcu_rpm.age_ms,
 			(unsigned long)acu.nodes.brake_front.age_ms, (unsigned long)acu.nodes.brake_rear.age_ms,
 			(unsigned long)acu.nodes.steering.age_ms);
-	tx_printf("Ign ACU->VCU: pedido %u enable %u\r\n", acu.outputs.ignition_request, acu.outputs.ignition_enable);
+	tx_printf("Ign ACU->VCU: pedido %u enable %u   VCU estado %u R2D-ok %s\r\n", acu.outputs.ignition_request,
+			acu.outputs.ignition_enable, acu.vcu.vcu_state, acu.as.flowchart.r2d ? "sim" : "nao");
+	tx_printf("RES: %s%s (signal %u)\r\n", acu.res.stop_pressed ? "STOP" : "a andar", acu.res.go_pressed ? " + GO" : "",
+			acu.res.signal);
 	if (acu.fault.count) {
 		tx_printf("Ultima falha (%lu no total): %s\r\n", (unsigned long)acu.fault.count,
 				fault_description(acu.fault.last_reason));
@@ -341,6 +344,9 @@ static bool send_record(uint8_t index, uint32_t now_ms) {
 		tx_printf(" ARRANQUE (RCC_CSR 0x%08lX)\r\n", (unsigned long)r->detail);
 	} else {
 		tx_printf(" %s: %s\r\n", fault_name((fault_reason_t)r->reason), fault_description((fault_reason_t)r->reason));
+		if (r->detected_as != r->reason) {
+			tx_printf("   (visto primeiro como %s)\r\n", fault_name((fault_reason_t)r->detected_as));
+		}
 		tx_printf("   modo %s AS %s arranque %s missao %s\r\n", acu_mode_name((acu_mode_t)r->mode),
 				as_state_name((AS_STATE_t)r->as_state), checkup_step_name((checkup_step_t)r->checkup_step),
 				mission_name((mission_t)r->mission));
