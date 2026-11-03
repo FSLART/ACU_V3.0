@@ -78,7 +78,7 @@ typedef enum {
 typedef enum {
 	CHECKUP_NOT_STARTED,
 	CHECKUP_TANK_PRESSURE,       /* EBS tanks in range */
-	CHECKUP_BRAKES_ENGAGED,      /* T 14.4.1: brake pressure built up before the SDC may close */
+	CHECKUP_BRAKES_ENGAGED,      /* EBS builds brake pressure on both axles */
 	CHECKUP_SDC_CLOSE,           /* watchdog pulses on: SDC must close */
 	CHECKUP_WATCHDOG_OPENS_SDC,  /* pulses off: the external watchdog must open the SDC */
 	CHECKUP_SDC_RECLOSE,         /* pulses on again: SDC must close again */

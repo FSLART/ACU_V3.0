@@ -19,7 +19,7 @@ void checkup_reset(void);
 void checkup_update(uint32_t now_ms);
 
 bool checkup_passed(void);
-bool checkup_wants_watchdog_pulses(void);  /* T 14.4.1: may the SDC be closed in this step? */
+bool checkup_is_testing_watchdog(void);    /* pulses stopped on purpose: the SDC must open */
 bool checkup_allows_ts_request(void);
 bool checkup_releases_front_brake(void);
 bool checkup_releases_rear_brake(void);

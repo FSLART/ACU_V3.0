@@ -151,19 +151,8 @@ void checkup_update(uint32_t now_ms) {
 	}
 }
 
-bool checkup_wants_watchdog_pulses(void) {
-	switch (acu.checkup.step) {
-	case CHECKUP_SDC_CLOSE:
-	case CHECKUP_SDC_RECLOSE:
-	case CHECKUP_TS_ACTIVATION:
-	case CHECKUP_FRONT_BRAKE:
-	case CHECKUP_REAR_BRAKE:
-	case CHECKUP_BOTH_BRAKES:
-	case CHECKUP_PASSED:
-		return true;
-	default:
-		return false; /* brakes not proven engaged yet (T 14.4.1), watchdog test, or failed */
-	}
+bool checkup_is_testing_watchdog(void) {
+	return acu.checkup.step == CHECKUP_WATCHDOG_OPENS_SDC;
 }
 
 bool checkup_allows_ts_request(void) {

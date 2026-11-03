@@ -13,8 +13,6 @@ from acu_sim import CONFIG, ENUMS, FAULT, AcuSim, World, mission_value
 
 BYPASS_JETSON = CONFIG["BYPASS_JETSON_TIMEOUT"] == 1
 
-PULSE_STEPS = {"CHECKUP_SDC_CLOSE", "CHECKUP_SDC_RECLOSE", "CHECKUP_TS_ACTIVATION", "CHECKUP_FRONT_BRAKE",
-               "CHECKUP_REAR_BRAKE", "CHECKUP_BOTH_BRAKES", "CHECKUP_PASSED"}
 TS_STEPS = {"CHECKUP_TS_ACTIVATION", "CHECKUP_FRONT_BRAKE", "CHECKUP_REAR_BRAKE", "CHECKUP_BOTH_BRAKES",
             "CHECKUP_PASSED"}
 
@@ -48,11 +46,11 @@ def safety_violations(s):
     if s.rear_ebs_released and not (autonomous_ok and (driving or s.checkup_step == "CHECKUP_FRONT_BRAKE")):
         found.append("rear EBS released outside AS Driving / the front-only checkup step")
 
-    manual_sdc = s.mode == "ACU_MODE_IDLE" and s.mission == "MISSION_MANUAL" and not s.asms_on
-    autonomous_sdc = (autonomous_ok and s.asms_on and s.checkup_step in PULSE_STEPS
-                      and s.finish_step != "FINISH_EBS_ACTIVATED")
-    if s.watchdog_pulses_on and not (manual_sdc or autonomous_sdc):
-        found.append("SDC kept closed outside the T 14.4.1 conditions")
+    # SDC always closed (the VCU needs it to switch the TS on), open only on a fault or for the watchdog test
+    sdc_closed_wanted = (not s.fault_active and s.mode != "ACU_MODE_EMERGENCY"
+                         and s.checkup_step != "CHECKUP_WATCHDOG_OPENS_SDC")
+    if bool(s.watchdog_pulses_on) != sdc_closed_wanted:
+        found.append("SDC open without a fault, or kept closed during a fault")
 
     if s.ignition_request and not s.ignition_enable:
         found.append("TS request without the enable")
@@ -145,18 +143,17 @@ class TestBoot(AcuTest):
         self.assertEqual(s.mission, "MISSION_MANUAL")
         self.assertFalse(s.front_ebs_released or s.rear_ebs_released or s.ignition_request)
 
-    def test_manual_mission_with_asms_off_closes_sdc(self):
-        """T 14.4.1 manual driving."""
-        self.w.run(300)
-        self.assertTrue(self.w.state.watchdog_pulses_on)
-        self.assertTrue(self.w.state.sdc_closed)
-
-    def test_autonomous_mission_with_asms_off_keeps_sdc_open(self):
-        """T 14.4.1: autonomous driving needs ASMS on and brakes engaged first."""
-        self.w.set_mission("TRACKDRIVE")
-        self.w.run(300)
-        self.assertFalse(self.w.state.watchdog_pulses_on)
-        self.assertFalse(self.w.state.sdc_closed)
+    def test_sdc_closed_from_power_up_with_any_mission(self):
+        """The VCU needs the SDC closed to switch the TS on: closed in IDLE, whatever the mission and ASMS."""
+        for mission, asms in (("MANUAL", False), ("TRACKDRIVE", False), ("MANUAL", True)):
+            with self.subTest(mission=mission, asms=asms):
+                self.restart()
+                self.w.set_mission(mission)
+                self.w.set_asms(asms)
+                self.w.run(300)
+                self.assertEqual(self.w.state.mode, "ACU_MODE_IDLE")
+                self.assertTrue(self.w.state.watchdog_pulses_on)
+                self.assertTrue(self.w.state.sdc_closed)
 
     def test_can_frames_at_10_hz_with_as_off(self):
         self.w.run(1000)
@@ -203,14 +200,14 @@ class TestMissionSelection(AcuTest):
 
 
 class TestStartConditions(AcuTest):
-    def test_asms_on_with_manual_mission_does_not_start_and_opens_sdc(self):
+    def test_asms_on_with_manual_mission_does_not_start(self):
         self.w.run(300)
         self.w.set_asms(True)
         self.w.run(500)
         s = self.w.state
         self.assertEqual(s.mode, "ACU_MODE_IDLE")
         self.assertEqual(s.checkup_step, "CHECKUP_NOT_STARTED")
-        self.assertFalse(s.watchdog_pulses_on)
+        self.assertTrue(s.watchdog_pulses_on)
 
     def test_asms_on_with_ign_button_pressed_does_not_start(self):
         self.w.set_mission("TRACKDRIVE")
@@ -257,16 +254,19 @@ class TestCheckupPasses(AcuTest):
         opened = [t for t, f, _, new in self.w.events if f == "sdc_closed" and new == 0 and test_start <= t <= test_end]
         self.assertTrue(opened, self.w.log())
 
-    def test_sdc_closes_only_after_brakes_engaged(self):
-        """T 14.4.1"""
+    def test_sdc_opens_only_for_the_watchdog_test_before_the_ts(self):
+        self.ok(self.w.start_to_ready())
+        stops = [t for t, f, _, new in self.w.events if f == "watchdog_pulses_on" and new == 0]
+        self.assertEqual(stops, [self.w.first_time("checkup_step", "CHECKUP_WATCHDOG_OPENS_SDC")], self.w.log())
+        self.assertLess(stops[0], self.w.first_time("checkup_step", "CHECKUP_TS_ACTIVATION"))
+
+    def test_sdc_stays_closed_while_the_brakes_build_pressure(self):
         self.w.plant.front_ratio = 0.0  # no brake pressure yet
         self.w.run(400)
         self.w.start_checkup()
         self.w.run(1000)
         self.assertEqual(self.w.state.checkup_step, "CHECKUP_BRAKES_ENGAGED")
-        self.assertFalse(self.w.state.watchdog_pulses_on)
-        self.w.plant.front_ratio = 9.4
-        self.assertTrue(self.w.run_until(lambda w: w.state.watchdog_pulses_on, 2000))
+        self.assertTrue(self.w.state.watchdog_pulses_on and self.w.state.sdc_closed)
 
     def test_ign_button_before_the_ts_step_does_nothing(self):
         self.w.plant.front_ratio = 0.0
@@ -589,16 +589,16 @@ class TestFinish(AcuTest):
         return self.w.run_until(lambda w: w.state.as_state == "AS_STATE_FINISHED" or w.state.fault_active,
                                 timeout_ms)
 
-    def test_finished_at_standstill_opens_sdc_and_switches_ts_off(self):
+    def test_finished_at_standstill_engages_the_ebs_and_switches_ts_off(self):
         self.assertTrue(self.finish())
         s = self.w.state
         self.assertEqual(s.as_state, "AS_STATE_FINISHED")
         self.assertFalse(s.fault_active)
-        self.assertFalse(s.watchdog_pulses_on or s.ignition_request)
+        self.assertFalse(s.ignition_request)
         self.assertFalse(s.front_ebs_released or s.rear_ebs_released)
         self.w.run(500)
-        self.assertFalse(self.w.state.ts_active)
-        self.assertFalse(self.w.state.sdc_closed)
+        self.assertFalse(self.w.state.ts_active)  # the VCU switched it off on the dropped request
+        self.assertTrue(self.w.state.sdc_closed)  # not a fault: the SDC stays closed
         self.assertTrue(self.w.state.assi_blue)
         self.assertEqual(self.w.acu.acu_frame().as_state, 5)
         self.assertEqual(self.w.acu.dv_status().asb_ebs_state, 3)
@@ -749,6 +749,8 @@ class TestEmergencyExit(AcuTest):
         s = self.w.state
         self.assertEqual((s.as_state, s.fault_reason, s.fault_last_reason),
                          ("AS_STATE_OFF", "FAULT_NONE", "FAULT_SDC_OPENED"))
+        self.w.run(200)
+        self.assertTrue(self.w.state.sdc_closed)  # fault cleared: the SDC closes again
 
     def test_a_new_run_can_start_afterwards(self):
         self.w.set_asms(False)

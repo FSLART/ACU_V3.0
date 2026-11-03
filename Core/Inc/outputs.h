@@ -4,7 +4,8 @@
  * Every output is decided again each cycle from the state machines, never left set
  * by an old state:
  *   - EBS solenoids: released only in AS Driving and in the single-circuit checkup steps,
- *   - SDC (external watchdog pulses): T 14.4.1 conditions only,
+ *   - SDC (external watchdog pulses): always closed, open only on a fault and for the
+ *     checkup watchdog test,
  *   - TS request to the VCU: only during the checkup TS step and AS Ready/Driving,
  *   - ASSIs: T 14.9.1 pattern of the AS state.
  */

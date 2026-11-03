@@ -18,26 +18,15 @@ static void decide_ebs(void) {
 	acu.outputs.rear_ebs_released = driving || (autonomous_without_fault() && checkup_releases_rear_brake());
 }
 
-/* T 14.4.1: the AS may only close the SDC
- *   - for manual driving: manual mission and ASMS off (no autonomous brake actuation possible),
- *   - for autonomous driving: autonomous mission, ASMS on and brakes engaged (checkup order).
- * The external watchdog keeps the SDC closed only while it gets pulses. */
+/* The SDC is kept closed at all times, so the VCU can always switch the TS on (as on the car
+ * before). It opens only
+ *   - on a fault (EMERGENCY): no more pulses, the external watchdog opens it,
+ *   - for the watchdog test of the initial checkup (T 15.3.1), before the TS step.
+ * Note T 14.4.1 asks for more conditions to close it (mission, ASMS, brakes engaged). */
 static void decide_sdc(void) {
-	bool closed = false;
+	bool testing_watchdog = acu.mode == ACU_MODE_AUTONOMOUS && checkup_is_testing_watchdog();
 
-	switch (acu.mode) {
-	case ACU_MODE_IDLE:
-		closed = acu.mission.selected == MISSION_MANUAL && !acu.inputs.asms_on;
-		break;
-	case ACU_MODE_AUTONOMOUS:
-		closed = !acu.fault.active && acu.inputs.asms_on && checkup_wants_watchdog_pulses()
-				&& acu.as.finish != FINISH_EBS_ACTIVATED;
-		break;
-	default:
-		closed = false; /* STARTUP and EMERGENCY: SDC open */
-		break;
-	}
-	acu.outputs.watchdog_pulses_on = closed;
+	acu.outputs.watchdog_pulses_on = acu.mode != ACU_MODE_EMERGENCY && !acu.fault.active && !testing_watchdog;
 }
 
 /* The IGN button toggles the TS request sent to the VCU (ACU.ign), only while the ACU allows it. */

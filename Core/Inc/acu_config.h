@@ -14,7 +14,7 @@
 /* Initial checkup steps (T 15.3.1) */
 #define SKIP_WDT_CHECK            0   /* watchdog test: SDC must open when the pulses stop */
 #define SKIP_PNEUMATIC_CHECK      0   /* EBS tank pressures in range */
-#define SKIP_PRESSURE_CHECK1      0   /* brakes engaged before the SDC may close (T 14.4.1) */
+#define SKIP_PRESSURE_CHECK1      0   /* EBS builds brake pressure on both axles */
 #define SKIP_IGNITION_CHECK       0   /* wait for the TS to be active */
 #define SKIP_PRESSURE_FRONT_CHECK 0   /* front EBS circuit alone */
 #define SKIP_PRESSURE_REAR_CHECK  0   /* rear EBS circuit alone */

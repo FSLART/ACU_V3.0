@@ -102,7 +102,8 @@ static void handle_jetson_request(uint32_t now_ms) {
 }
 
 /* AS Finished = mission finished + standstill + EBS activated. At standstill the ACU
- * activates the EBS itself: outputs.c then opens the SDC, engages the EBS and drops the TS request. */
+ * activates the EBS itself: outputs.c engages the EBS and drops the TS request. The SDC stays
+ * closed (it only opens on a fault); a TS still on after FINISH_TS_OFF_TIMEOUT_MS is a fault. */
 static void update_finish(uint32_t now_ms) {
 	if (acu.fault.active) {
 		return;
