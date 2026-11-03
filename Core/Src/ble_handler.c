@@ -4,135 +4,164 @@
  *  Created on: May 25, 2026
  *      Author: Bruno Vicente
  *
- * Plain-text telemetry over the RN4871 (transparent UART on BLE_UART), readable
- * in any BLE serial terminal on a phone:
+ * What the phone sees:
  *   - one line as soon as a key state changes, e.g.
- *       [12.345 s] Estado IDLE->AS_ON | Arranque WDT_TOGGLE_CHECK->HV_ACTIVATION
- *   - a status block every second.
+ *       [12.345 s] Modo IDLE->AUTONOMOUS | Arranque NOT_STARTED->TANK_PRESSURE
+ *   - a status block every second,
+ *   - the fault log on "flush".
  * Commands from the phone: "stop", "start", "flush" (each ending in \r\n).
  */
-
 #include "ble_handler.h"
-#include "APP.h"
-#include "state_machine.h"
-#include "hardware_abstraction.h"
+#include "acu.h"
+#include "faults.h"
+#include "logger.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
-extern cant_acu_state_t ACU_STATE;
-
 #define STATUS_PERIOD_MS  1000
 #define TX_STUCK_MS       500
-#define MAX_EVENTS        20      // must match your EEPROM layout
 
-static uint8_t  dma_rx[BLE_RX_BUF_SIZE];
-static uint16_t rx_head = 0;        // our read position in the circular buffer
+/* ── RN4871 configuration ─────────────────────────────────────────────────── */
 
-static char     ble_tx_buf[BLE_TX_BUF_SIZE];
-static size_t   tx_len = 0;
-volatile uint8_t ble_tx_busy = 0;   // set here, cleared by the TX complete interrupt
-static uint32_t ble_tx_tick = 0;
+/* The RN4871 powers up with the ACU and ignores "$$$" until it has booted. */
+#define BLE_BOOT_DELAY_MS 1000
+#define BLE_CMD_WAIT_MS   500
 
-static BLE_STATE_MACHINE_t ble_state = BLE_IDLE;
-static uint8_t  logs_paused = 0;
-static uint8_t  flushing    = 0;
-static uint8_t  flush_index = 0;
-static uint32_t status_tick = 0;
+static const char *const ble_config_commands[] = {
+	"SN," BLE_DEVICE_NAME "\r\n",
+	"SS,C0\r\n", /* Device Information + Transparent UART service, which BLE terminal apps look for */
+	"SR,01\r\n",
+	"R,1\r\n",   /* settings take effect after a reboot */
+};
+#define BLE_CONFIG_COMMAND_COUNT (sizeof(ble_config_commands) / sizeof(ble_config_commands[0]))
 
-/* ── Names shown on the phone ──────────────────────────────────────────── */
+typedef enum {
+	MODULE_IDLE,
+	MODULE_WAIT_BOOT,       /* send $$$ once the module has booted */
+	MODULE_WAIT_CMD_PROMPT, /* CMD> prompt after $$$ */
+	MODULE_SEND_COMMAND,
+	MODULE_WAIT_COMMAND,    /* AOK after each command */
+	MODULE_DONE
+} module_config_step_t;
 
-#define NAME(x) [x] = #x
-#define NAME_OF(table, v) (((unsigned)(v) < sizeof(table) / sizeof((table)[0]) && (table)[v]) ? (table)[v] : "?")
+static module_config_step_t module_step = MODULE_IDLE;
+static uint8_t module_command = 0;
+static uint32_t module_step_since_ms = 0;
 
-static const char *const vehicle_names[] = { NAME(Start), NAME(IDLE), NAME(AS_ON), NAME(EMERGENCY) };
-static const char *const autonomous_names[] = {
-    NAME(OFF), NAME(Initial_Sequence), NAME(Monitor_sequence), NAME(AS_Emergency), NAME(Finish) };
-static const char *const acu_names[] = {
-    NAME(INIT), NAME(MISSION_SELECT), NAME(JETSON_WAITING), NAME(INIT_SEQUENCE), NAME(READY),
-    NAME(DRIVING), NAME(EBS_ERROR), NAME(ACU_EMERGENCY), NAME(FINISHED), NAME(ACU_MANUAL) };
-static const char *const sequence_names[] = {
-    NAME(WDT_TOGGLE_CHECK), NAME(WDT_STP_TOGGLE_CHECK), NAME(PNEUMATIC_CHECK), NAME(PRESSURE_CHECK1),
-    NAME(HV_ACTIVATION), NAME(PRESSURE_CHECK_FRONT), NAME(PRESSURE_CHECK_REAR), NAME(PRESSURE_CHECK2),
-    NAME(SEQUENCE_ERROR) };
-static const char *const as_names[] = {
-    [AS_STATE_OFF] = "OFF", [AS_STATE_READY] = "READY", [AS_STATE_DRIVING] = "DRIVING",
-    [AS_STATE_EMERGENCY] = "EMERGENCY", [AS_STATE_FINISHED] = "FINISHED" };
-static const char *const mission_names[] = {
-    NAME(MANUAL), NAME(ACCELERATION), NAME(SKIDPAD), NAME(TRACKDRIVE), NAME(EBS_TEST),
-    NAME(INSPECTION), NAME(AUTOCROSS) };
-static const char *const can_state_names[] = {
-    NAME(CAN_BUS_OK), NAME(CAN_BUS_WARNING), NAME(CAN_BUS_PASSIVE), NAME(CAN_BUS_OFF), NAME(CAN_BUS_NOT_STARTED) };
-static const char *const can_error_names[] = {
-    NAME(CAN_ERR_NONE), NAME(CAN_ERR_STUFF), NAME(CAN_ERR_FORM), NAME(CAN_ERR_ACK),
-    NAME(CAN_ERR_BIT_RECESSIVE), NAME(CAN_ERR_BIT_DOMINANT), NAME(CAN_ERR_CRC) };
-static const char *const cause_names[] = {
-    NAME(NONE), NAME(SDC_OPEN), NAME(RES), NAME(Pressure_checks), NAME(VCU_Timeout),
-    NAME(Jetson_timeout), NAME(ACU_WDT_TRIGERED), NAME(dir_actuator_timeout),
-    NAME(Dynamics_REAR_Pressure_timeout), NAME(UNKOWN) };
+static void module_go_to(module_config_step_t step, uint32_t now_ms) {
+	module_step = step;
+	module_step_since_ms = now_ms;
+	acu.ble.module_config_step = (uint8_t)step;
+}
 
-/* ── TX: one DMA transfer at a time, never blocks ─────────────────────── */
+static void module_config_tick(uint32_t now_ms) {
+	switch (module_step) {
+	case MODULE_IDLE:
+	case MODULE_DONE:
+		break;
+	case MODULE_WAIT_BOOT:
+		if (time_elapsed(module_step_since_ms, now_ms, BLE_BOOT_DELAY_MS)) {
+			HAL_UART_Transmit(BLE_UART, (uint8_t *)"$$$", 3, 10);
+			module_go_to(MODULE_WAIT_CMD_PROMPT, now_ms);
+		}
+		break;
+	case MODULE_WAIT_CMD_PROMPT:
+		if (time_elapsed(module_step_since_ms, now_ms, BLE_CMD_WAIT_MS)) {
+			module_command = 0;
+			module_go_to(MODULE_SEND_COMMAND, now_ms);
+		}
+		break;
+	case MODULE_SEND_COMMAND:
+		if (module_command < BLE_CONFIG_COMMAND_COUNT) {
+			const char *command = ble_config_commands[module_command];
+			HAL_UART_Transmit(BLE_UART, (uint8_t *)command, (uint16_t)strlen(command), 10);
+			module_go_to(MODULE_WAIT_COMMAND, now_ms);
+		} else {
+			module_go_to(MODULE_DONE, now_ms);
+		}
+		break;
+	case MODULE_WAIT_COMMAND:
+		if (time_elapsed(module_step_since_ms, now_ms, BLE_CMD_WAIT_MS)) {
+			module_command++;
+			module_go_to(MODULE_SEND_COMMAND, now_ms);
+		}
+		break;
+	default:
+		module_go_to(MODULE_DONE, now_ms);
+		break;
+	}
+}
 
-static uint8_t tx_begin(void) {
-    if (ble_tx_busy) {
-        return 0;
-    }
-    ble_tx_busy = 1;
-    ble_tx_tick = HAL_GetTick();
-    tx_len = 0;
-    return 1;
+/* ── TX: one DMA transfer at a time, never blocks ─────────────────────────── */
+
+static uint8_t dma_rx[BLE_RX_BUF_SIZE];
+static uint16_t rx_head = 0;        /* our read position in the circular buffer */
+static char ble_tx_buf[BLE_TX_BUF_SIZE];
+static size_t tx_len = 0;
+volatile uint8_t ble_tx_busy = 0;   /* set here, cleared by the TX complete interrupt */
+static uint32_t ble_tx_since_ms = 0;
+
+static bool tx_begin(uint32_t now_ms) {
+	if (ble_tx_busy) {
+		return false;
+	}
+	ble_tx_busy = 1;
+	ble_tx_since_ms = now_ms;
+	tx_len = 0;
+	return true;
 }
 
 static void tx_printf(const char *fmt, ...) {
-    va_list args;
-    int n;
+	va_list args;
+	int n;
 
-    if (tx_len >= sizeof(ble_tx_buf) - 1) {
-        return;
-    }
-    va_start(args, fmt);
-    n = vsnprintf(ble_tx_buf + tx_len, sizeof(ble_tx_buf) - tx_len, fmt, args);
-    va_end(args);
-    if (n > 0) {
-        tx_len += (size_t)n;
-    }
-    if (tx_len > sizeof(ble_tx_buf) - 1) {
-        tx_len = sizeof(ble_tx_buf) - 1;
-    }
+	if (tx_len >= sizeof(ble_tx_buf) - 1) {
+		return;
+	}
+	va_start(args, fmt);
+	n = vsnprintf(ble_tx_buf + tx_len, sizeof(ble_tx_buf) - tx_len, fmt, args);
+	va_end(args);
+	if (n > 0) {
+		tx_len += (size_t)n;
+	}
+	if (tx_len > sizeof(ble_tx_buf) - 1) {
+		tx_len = sizeof(ble_tx_buf) - 1;
+	}
 }
 
 static void tx_send(void) {
-    if (HAL_UART_Transmit_DMA(BLE_UART, (uint8_t *)ble_tx_buf, tx_len) != HAL_OK) {
-        ble_tx_busy = 0;
-    }
+	acu.ble.lines_sent++;
+	if (HAL_UART_Transmit_DMA(BLE_UART, (uint8_t *)ble_tx_buf, (uint16_t)tx_len) != HAL_OK) {
+		ble_tx_busy = 0;
+	}
 }
 
-static void ble_send_text(const char *s) {
-    if (tx_begin()) {
-        tx_printf("%s", s);
-        tx_send();
-    }
+static void tx_time(uint32_t ms) {
+	tx_printf("[%lu.%03lu s]", (unsigned long)(ms / 1000), (unsigned long)(ms % 1000));
 }
 
-/* ── RX: commands from the phone in the circular DMA buffer ───────────── */
+/* ── RX: commands from the phone in the circular DMA buffer ───────────────── */
 
-/* Returns 1 if needle is in the unread bytes, and consumes them. */
-static uint8_t rx_contains(const char *needle) {
-    uint16_t write_head = BLE_RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(BLE_UART->hdmarx);
-    char tmp[BLE_RX_BUF_SIZE + 1];
-    uint16_t n = 0, i = rx_head;
+static uint16_t rx_write_position(void) {
+	return (uint16_t)(BLE_RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(BLE_UART->hdmarx));
+}
 
-    while (i != write_head) {
-        tmp[n++] = dma_rx[i];
-        i = (i + 1) % BLE_RX_BUF_SIZE;
-    }
-    tmp[n] = '\0';
+/* Returns true if needle is in the unread bytes, and consumes them. */
+static bool rx_contains(const char *needle) {
+	uint16_t write_head = rx_write_position();
+	char unread[BLE_RX_BUF_SIZE + 1];
+	uint16_t n = 0;
 
-    if (strstr(tmp, needle)) {
-        rx_head = write_head;
-        return 1;
-    }
-    return 0;
+	for (uint16_t i = rx_head; i != write_head; i = (uint16_t)((i + 1) % BLE_RX_BUF_SIZE)) {
+		unread[n++] = (char)dma_rx[i];
+	}
+	unread[n] = '\0';
+	if (strstr(unread, needle)) {
+		rx_head = write_head;
+		return true;
+	}
+	return false;
 }
 
 /* What the RN4871 answered during configuration: "CMD>" after $$$, "AOK" or "Err"
@@ -140,225 +169,270 @@ static uint8_t rx_contains(const char *needle) {
 char ble_module_reply[128];
 
 static void save_module_reply(void) {
-    uint16_t write_head = BLE_RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(BLE_UART->hdmarx);
-    size_t n = 0;
+	uint16_t write_head = rx_write_position();
+	size_t n = 0;
 
-    while (rx_head != write_head && n < sizeof(ble_module_reply) - 1) {
-        char c = (char)dma_rx[rx_head];
-        ble_module_reply[n++] = (c >= ' ' && c <= '~') ? c : ' ';
-        rx_head = (rx_head + 1) % BLE_RX_BUF_SIZE;
-    }
-    ble_module_reply[n] = '\0';
-    rx_head = write_head;
+	while (rx_head != write_head && n < sizeof(ble_module_reply) - 1) {
+		char c = (char)dma_rx[rx_head];
+		ble_module_reply[n++] = (c >= ' ' && c <= '~') ? c : ' ';
+		rx_head = (uint16_t)((rx_head + 1) % BLE_RX_BUF_SIZE);
+	}
+	ble_module_reply[n] = '\0';
+	rx_head = write_head;
 }
 
-/* ── What the phone sees ───────────────────────────────────────────────── */
+/* ── Event lines ──────────────────────────────────────────────────────────── */
 
 typedef struct {
-    uint8_t vehicle, autonomous, acu, sequence, as, mission, jetson_mission, cause, hv, sdc, asms;
+	acu_mode_t mode;
+	AS_STATE_t as_state;
+	checkup_step_t checkup;
+	finish_step_t finish;
+	mission_t mission;
+	uint8_t jetson_mission;
+	fault_reason_t fault;
+	bool ts_active;
+	bool sdc_closed;
+	bool asms_on;
 } ble_snapshot_t;
 
 static ble_snapshot_t last_sent;
 
 static ble_snapshot_t take_snapshot(void) {
-    ble_snapshot_t s = {
-        .vehicle = Vehicle_state_machine,
-        .autonomous = Autonomous_state,
-        .acu = ACU_STATE,
-        .sequence = startup_sequence_state,
-        .as = t24.Autonomous_State,
-        .mission = t24.Current_Mission,
-        .jetson_mission = t24.Jetson_mission,
-        .cause = Emergency_cause,
-        .hv = t24.Ignition_Status,
-        .sdc = t24.SDC_feedback,
-        .asms = t24.ASMS,
-    };
-    return s;
+	ble_snapshot_t s = {
+		.mode = acu.mode,
+		.as_state = acu.as.state,
+		.checkup = acu.checkup.step,
+		.finish = acu.as.finish,
+		.mission = acu.mission.selected,
+		.jetson_mission = acu.jetson.mission,
+		.fault = acu.fault.reason,
+		.ts_active = acu.vcu.ts_active,
+		.sdc_closed = acu.inputs.sdc_closed,
+		.asms_on = acu.inputs.asms_on,
+	};
+	return s;
 }
 
-static void tx_time(void) {
-    uint32_t ms = HAL_GetTick();
-    tx_printf("[%lu.%03lu s]", (unsigned long)(ms / 1000), (unsigned long)(ms % 1000));
-}
+/* One line with every key state that changed since the last line. Changes that happen
+ * while the previous text is still being sent are merged into the next line. */
+static void send_changes(uint32_t now_ms) {
+	ble_snapshot_t now = take_snapshot();
+	const char *sep = " ";
 
-/* One line with every key state that changed since the last line. Changes that
- * happen while the previous text is still being sent are merged into the next line. */
-static void send_changes(void) {
-    ble_snapshot_t now = take_snapshot();
-    const char *sep = " ";
+	if (memcmp(&now, &last_sent, sizeof(now)) == 0 || !tx_begin(now_ms)) {
+		return;
+	}
+	tx_time(now_ms);
 
-    if (memcmp(&now, &last_sent, sizeof(now)) == 0 || !tx_begin()) {
-        return;
-    }
-    tx_time();
-
-#define CHANGED(field, label, table) \
-    if (now.field != last_sent.field) { \
-        tx_printf("%s%s %s->%s", sep, label, NAME_OF(table, last_sent.field), NAME_OF(table, now.field)); \
-        sep = " | "; \
-    }
+#define CHANGED(field, label, name_of) \
+	if (now.field != last_sent.field) { \
+		tx_printf("%s%s %s->%s", sep, label, name_of(last_sent.field), name_of(now.field)); \
+		sep = " | "; \
+	}
 #define CHANGED_ON_OFF(field, label, on, off) \
-    if (now.field != last_sent.field) { \
-        tx_printf("%s%s %s", sep, label, now.field ? on : off); \
-        sep = " | "; \
-    }
+	if (now.field != last_sent.field) { \
+		tx_printf("%s%s %s", sep, label, now.field ? on : off); \
+		sep = " | "; \
+	}
 
-    CHANGED(vehicle, "Estado", vehicle_names)
-    CHANGED(autonomous, "Auto", autonomous_names)
-    CHANGED(sequence, "Arranque", sequence_names)
-    CHANGED(acu, "ACU", acu_names)
-    CHANGED(as, "AS", as_names)
-    CHANGED(mission, "Missao", mission_names)
-    CHANGED(jetson_mission, "Missao Jetson", mission_names)
-    CHANGED(cause, "Emergencia", cause_names)
-    CHANGED_ON_OFF(hv, "HV", "ON", "OFF")
-    CHANGED_ON_OFF(sdc, "SDC", "fechado", "ABERTO")
-    CHANGED_ON_OFF(asms, "ASMS", "ON", "OFF")
+	CHANGED(mode, "Modo", acu_mode_name)
+	CHANGED(as_state, "AS", as_state_name)
+	CHANGED(checkup, "Arranque", checkup_step_name)
+	CHANGED(finish, "Fim", finish_step_name)
+	CHANGED(mission, "Missao", mission_name)
+	CHANGED(jetson_mission, "Missao Jetson", mission_name)
+	CHANGED(fault, "Falha", fault_name)
+	CHANGED_ON_OFF(ts_active, "HV", "ON", "OFF")
+	CHANGED_ON_OFF(sdc_closed, "SDC", "fechado", "ABERTO")
+	CHANGED_ON_OFF(asms_on, "ASMS", "ON", "OFF")
 
-    tx_printf("\r\n");
-    tx_send();
-    last_sent = now;
+#undef CHANGED
+#undef CHANGED_ON_OFF
+
+	if (now.fault != FAULT_NONE && now.fault != last_sent.fault) {
+		tx_printf("\r\n  -> %s", fault_description(now.fault));
+	}
+	tx_printf("\r\n");
+	tx_send();
+	last_sent = now;
 }
 
-static uint8_t send_status(void) {
-    uint32_t ms = HAL_GetTick();
+/* ── Status block ─────────────────────────────────────────────────────────── */
 
-    if (!tx_begin()) {
-        return 0;
-    }
-    tx_printf("\r\n== ACU %lu.%lu s ==\r\n", (unsigned long)(ms / 1000), (unsigned long)((ms % 1000) / 100));
-    tx_printf("Estado:   %s / %s\r\n", NAME_OF(vehicle_names, Vehicle_state_machine),
-              NAME_OF(autonomous_names, Autonomous_state));
-    tx_printf("Arranque: %s\r\n", NAME_OF(sequence_names, startup_sequence_state));
-    tx_printf("ACU: %s   AS: %s\r\n", NAME_OF(acu_names, ACU_STATE), NAME_OF(as_names, t24.Autonomous_State));
-    tx_printf("Missao:   %s (Jetson %s)\r\n", NAME_OF(mission_names, t24.Current_Mission),
-              NAME_OF(mission_names, t24.Jetson_mission));
-    tx_printf("Emergencia: %s\r\n", NAME_OF(cause_names, Emergency_cause));
-    tx_printf("HV: %s   SDC: %s   ASMS: %s\r\n", t24.Ignition_Status ? "ON" : "OFF",
-              t24.SDC_feedback ? "fechado" : "ABERTO", t24.ASMS ? "ON" : "OFF");
-    tx_printf("EBS frente/tras: %s / %s\r\n", t24.front_solenoid ? "solto" : "travado",
-              t24.rear_solenoid ? "solto" : "travado");
-    tx_printf("Hidr frente/tras: %.1f / %.1f bar\r\n", (double)t24.Front_Pressure.Hydraulic,
-              (double)t24.Rear_Pressure.Hydraulic);
-    tx_printf("Pneu frente/tras: %.2f / %.2f bar\r\n", (double)t24.Front_Pressure.Pneumatic,
-              (double)t24.Rear_Pressure.Pneumatic);
-    tx_printf("CAN: %s  TEC %u REC %u  bus-off %lu  erro %s\r\n",
-              NAME_OF(can_state_names, can1_status.state), can1_status.tec, can1_status.rec,
-              (unsigned long)can1_status.bus_off, NAME_OF(can_error_names, can1_status.last_error));
-    tx_printf("Idade ms: VCU %lu Jetson %lu RES %lu AQT7 %lu Dir %lu\r\n",
-              (unsigned long)(ms - t24.VCU_LAST_TX), (unsigned long)(ms - t24.JETSON_LAST_TX),
-              (unsigned long)(ms - t24.RES_LAST_TX), (unsigned long)(ms - t24.REAR_PRESSURE_LAST_TX),
-              (unsigned long)(ms - t24.DIR_ACTUATOR_LAST_TX));
-    tx_printf("Ign ACU->VCU: pedido %u enable %u   WDT: %s\r\n", t24.Ignition_Request, t24.Ignition_enable,
-              t24.HW_WDT_Enable ? "ON" : "OFF");
-#if BYPASS_JETSON_TIMEOUT
-    tx_printf("!! BYPASS: timeout do Jetson DESLIGADO !!\r\n");
-#endif
-    if (seq_fail.count) {
-        tx_printf("Falha arranque: %s aos %lu.%lu s\r\n", NAME_OF(sequence_names, seq_fail.step),
-                  (unsigned long)(seq_fail.ms / 1000), (unsigned long)((seq_fail.ms % 1000) / 100));
-    }
-    tx_send();
-    return 1;
+static const char *on_off(bool on) {
+	return on ? "ON" : "OFF";
 }
 
-/* ── EEPROM log flush ──────────────────────────────────────────────────── */
-
-/* Format one EEPROM event record as text. Called once per main loop tick while flushing. */
-static void flush_one_record(uint8_t index) {
-    /* TODO: read EventRecord from EEPROM at:
-       address = LOG_BASE + index * RECORD_SIZE
-       e.g. eeprom_read(LOG_BASE + index * RECORD_SIZE, &rec, sizeof(rec)); */
-
-    /* TODO: validate record:
-       if (rec.magic != 0xA5 || !crc_valid(&rec)) → skip, send "EMPTY\r\n" */
-
-    /* TODO: format the record with tx_printf, example layout:
-       BOOT:%u UPTIME:%lu [TS:%lu]\r\n
-       EVENT:%s SEV:%u\r\n
-       PC:0x%08lX LR:0x%08lX\r\n
-       CFSR:0x%08lX HFSR:0x%08lX\r\n
-       STATE:%u SDC:0x%02X\r\n
-       CRC:0x%04X\r\n
-       ---\r\n  */
-
-    if (!tx_begin()) {
-        return;                     /* drop this record, next tick will retry */
-    }
-    tx_printf("SLOT:%u (EEPROM not yet implemented)\r\n---\r\n", index);
-    tx_send();
+static void print_test_flags(void) {
+#define WARN_IF_SET(flag) \
+	if (flag) { \
+		tx_printf("!! TESTE: " #flag " = 1 !!\r\n"); \
+	}
+	WARN_IF_SET(SKIP_WDT_CHECK)
+	WARN_IF_SET(SKIP_PNEUMATIC_CHECK)
+	WARN_IF_SET(SKIP_PRESSURE_CHECK1)
+	WARN_IF_SET(SKIP_IGNITION_CHECK)
+	WARN_IF_SET(SKIP_PRESSURE_FRONT_CHECK)
+	WARN_IF_SET(SKIP_PRESSURE_REAR_CHECK)
+	WARN_IF_SET(SKIP_PRESSURE_CHECK2)
+	WARN_IF_SET(BYPASS_FRONT_HYD_PRESSURE)
+	WARN_IF_SET(BYPASS_REAR_HYD_PRESSURE)
+	WARN_IF_SET(BYPASS_JETSON_TIMEOUT)
+#undef WARN_IF_SET
 }
 
-/* ── Public API ──────────────────────────────────────────────────────────── */
+static bool send_status(uint32_t now_ms) {
+	const CAN_BusStatus *can = acu.can_bus;
 
-void ble_handler_init(void) {
-    /* Circular RX DMA runs forever, never needs restarting. */
-    HAL_UART_Receive_DMA(BLE_UART, dma_rx, BLE_RX_BUF_SIZE);
-    ble_state = BLE_WAIT_CONFIG;
+	if (!tx_begin(now_ms)) {
+		return false;
+	}
+	tx_printf("\r\n== ACU %lu.%lu s ==\r\n", (unsigned long)(now_ms / 1000), (unsigned long)((now_ms % 1000) / 100));
+	tx_printf("Modo: %s   AS: %s\r\n", acu_mode_name(acu.mode), as_state_name(acu.as.state));
+	tx_printf("Arranque: %s   Fim: %s\r\n", checkup_step_name(acu.checkup.step), finish_step_name(acu.as.finish));
+	tx_printf("Missao: %s (Jetson %s, pede %s)\r\n", mission_name(acu.mission.selected),
+			mission_name((mission_t)acu.jetson.mission), as_state_name((AS_STATE_t)acu.jetson.as_state));
+	tx_printf("Falha: %s\r\n", fault_name(acu.fault.reason));
+	tx_printf("HV: %s   SDC: %s   ASMS: %s   WDT: %s\r\n", on_off(acu.vcu.ts_active),
+			acu.inputs.sdc_closed ? "fechado" : "ABERTO", on_off(acu.inputs.asms_on),
+			on_off(acu.outputs.watchdog_pulses_on));
+	tx_printf("EBS frente/tras: %s / %s\r\n", acu.outputs.front_ebs_released ? "solto" : "travado",
+			acu.outputs.rear_ebs_released ? "solto" : "travado");
+	tx_printf("Hidr frente/tras: %.1f / %.1f bar\r\n", (double)acu.brakes.front_bar, (double)acu.brakes.rear_bar);
+	tx_printf("Tanque frente/tras: %.2f / %.2f bar\r\n", (double)acu.inputs.front_tank_bar,
+			(double)acu.inputs.rear_tank_bar);
+	tx_printf("RPM: %u / %u (%s)\r\n", acu.vcu.motor_rpm_left, acu.vcu.motor_rpm_right,
+			!acu.as.speed_known ? "sem dados" : (acu.as.moving ? "a mexer" : "parado"));
+	if (can) {
+		tx_printf("CAN: %s  TEC %u REC %u  bus-off %lu  erro %s\r\n", can->state_text ? can->state_text : "?",
+				can->tec, can->rec, (unsigned long)can->bus_off, can->last_error_text ? can->last_error_text : "?");
+	}
+	tx_printf("Idade ms: VCU %lu Jetson %lu RES %lu RPM %lu AQT1 %lu AQT7 %lu Dir %lu\r\n",
+			(unsigned long)acu.nodes.vcu.age_ms, (unsigned long)acu.nodes.jetson.age_ms,
+			(unsigned long)acu.nodes.res.age_ms, (unsigned long)acu.nodes.vcu_rpm.age_ms,
+			(unsigned long)acu.nodes.brake_front.age_ms, (unsigned long)acu.nodes.brake_rear.age_ms,
+			(unsigned long)acu.nodes.steering.age_ms);
+	tx_printf("Ign ACU->VCU: pedido %u enable %u\r\n", acu.outputs.ignition_request, acu.outputs.ignition_enable);
+	if (acu.fault.count) {
+		tx_printf("Ultima falha (%lu no total): %s\r\n", (unsigned long)acu.fault.count,
+				fault_description(acu.fault.last_reason));
+	}
+	tx_printf("Log: %u registos, EEPROM %s   Reset: %s\r\n", logger_record_count(), acu.log.eeprom_ok ? "ok" : "FALHOU",
+			acu.system.reset_cause ? acu.system.reset_cause : "?");
+	tx_printf("Stack livre: ctl %lu tel %lu log %lu\r\n", (unsigned long)acu.system.stack_free_control,
+			(unsigned long)acu.system.stack_free_telemetry, (unsigned long)acu.system.stack_free_logger);
+	print_test_flags();
+	tx_send();
+	return true;
 }
 
-void ble_handler(void) {
-    switch (ble_state) {
+/* ── Fault log ─────────────────────────────────────────────────────────────── */
 
-    case BLE_WAIT_CONFIG:
-        if (ble_module_config_is_done() == 5) {
-            save_module_reply();
-            last_sent = take_snapshot();
-            if (tx_begin()) {
-                tx_printf("\r\n" BLE_DEVICE_NAME " ligada\r\nRN4871: %s\r\n", ble_module_reply);
-                tx_send();
-            }
-            ble_state = BLE_BRIDGE;
-        }
-        break;
+static bool send_record(uint8_t index, uint32_t now_ms) {
+	const log_record_t *r = logger_record(index);
 
-    case BLE_BRIDGE:
-        if (ble_tx_busy && (HAL_GetTick() - ble_tx_tick > TX_STUCK_MS)) {
-            HAL_UART_AbortTransmit(BLE_UART);  /* TX only, the circular RX DMA keeps running */
-            ble_tx_busy = 0;
-        }
+	if (r == NULL || !tx_begin(now_ms)) {
+		return r == NULL;
+	}
+	tx_printf("#%u boot %u ", index, r->boot_number);
+	tx_time(r->uptime_ms);
+	if (r->event == LOG_EVENT_BOOT) {
+		tx_printf(" ARRANQUE (RCC_CSR 0x%08lX)\r\n", (unsigned long)r->detail);
+	} else {
+		tx_printf(" %s: %s\r\n", fault_name((fault_reason_t)r->reason), fault_description((fault_reason_t)r->reason));
+		tx_printf("   modo %s AS %s arranque %s missao %s\r\n", acu_mode_name((acu_mode_t)r->mode),
+				as_state_name((AS_STATE_t)r->as_state), checkup_step_name((checkup_step_t)r->checkup_step),
+				mission_name((mission_t)r->mission));
+		tx_printf("   tanques %.2f/%.2f hidr %.1f/%.1f SDC %u ASMS %u HV %u detalhe 0x%08lX\r\n",
+				(double)r->front_tank_bar, (double)r->rear_tank_bar, (double)r->front_brake_bar,
+				(double)r->rear_brake_bar, r->sdc_closed, r->asms_on, r->ts_active, (unsigned long)r->detail);
+	}
+	tx_send();
+	return true;
+}
 
-        if (rx_contains("stop\r\n")) {
-            logs_paused = 1;
-        } else if (rx_contains("start\r\n")) {
-            logs_paused = 0;
-            flushing    = 0;
-        } else if (rx_contains("flush\r\n")) {
-            logs_paused  = 1;
-            flushing     = 1;
-            flush_index  = 0;
-            ble_send_text("=== EVENT LOG ===\r\n");
-        }
+/* ── Public API ───────────────────────────────────────────────────────────── */
 
-        if (flushing) {
-            if (flush_index < MAX_EVENTS) {
-                flush_one_record(flush_index);
-                flush_index++;
-            } else {
-                ble_send_text("=== END LOG ===\r\n");
-                flushing    = 0;
-                logs_paused = 0;
-            }
-            break;
-        }
+typedef enum {
+	BLE_WAIT_MODULE_CONFIG,
+	BLE_RUNNING,
+	BLE_FLUSHING_LOG
+} ble_state_t;
 
-        if (!logs_paused) {
-            send_changes();
-            if (HAL_GetTick() - status_tick >= STATUS_PERIOD_MS && send_status()) {
-                status_tick = HAL_GetTick();
-            }
-        }
-        break;
+static ble_state_t ble_state = BLE_WAIT_MODULE_CONFIG;
+static uint8_t flush_index = 0;
+static uint32_t status_since_ms = 0;
 
-    default:
-        ble_state = BLE_BRIDGE;
-        break;
-    }
+void ble_handler_init(uint32_t now_ms) {
+	/* Circular RX DMA runs forever, never needs restarting. */
+	HAL_UART_Receive_DMA(BLE_UART, dma_rx, BLE_RX_BUF_SIZE);
+	module_go_to(MODULE_WAIT_BOOT, now_ms);
+	ble_state = BLE_WAIT_MODULE_CONFIG;
+}
+
+static void handle_commands(uint32_t now_ms) {
+	if (rx_contains("stop\r\n")) {
+		acu.ble.paused = true;
+	} else if (rx_contains("start\r\n")) {
+		acu.ble.paused = false;
+	} else if (rx_contains("flush\r\n") && tx_begin(now_ms)) {
+		tx_printf("=== LOG DE FALHAS (%u) ===\r\n", logger_record_count());
+		tx_send();
+		flush_index = 0;
+		ble_state = BLE_FLUSHING_LOG;
+	}
+}
+
+void ble_handler(uint32_t now_ms) {
+	module_config_tick(now_ms);
+
+	if (ble_tx_busy && time_elapsed(ble_tx_since_ms, now_ms, TX_STUCK_MS)) {
+		HAL_UART_AbortTransmit(BLE_UART); /* TX only, the circular RX DMA keeps running */
+		ble_tx_busy = 0;
+	}
+
+	switch (ble_state) {
+	case BLE_WAIT_MODULE_CONFIG:
+		if (module_step == MODULE_DONE && tx_begin(now_ms)) {
+			save_module_reply();
+			last_sent = take_snapshot();
+			tx_printf("\r\n" BLE_DEVICE_NAME " ligada\r\nRN4871: %s\r\n", ble_module_reply);
+			tx_send();
+			ble_state = BLE_RUNNING;
+		}
+		break;
+
+	case BLE_RUNNING:
+		handle_commands(now_ms);
+		if (ble_state == BLE_RUNNING && !acu.ble.paused) {
+			send_changes(now_ms);
+			if (time_elapsed(status_since_ms, now_ms, STATUS_PERIOD_MS) && send_status(now_ms)) {
+				status_since_ms = now_ms;
+			}
+		}
+		break;
+
+	case BLE_FLUSHING_LOG:
+		if (flush_index >= logger_record_count()) {
+			if (tx_begin(now_ms)) {
+				tx_printf("=== FIM DO LOG ===\r\n");
+				tx_send();
+				ble_state = BLE_RUNNING;
+			}
+		} else if (send_record(flush_index, now_ms)) {
+			flush_index++;
+		}
+		break;
+
+	default:
+		ble_state = BLE_RUNNING;
+		break;
+	}
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart == BLE_UART) {
-        ble_tx_busy = 0;
-    }
+	if (huart == BLE_UART) {
+		ble_tx_busy = 0;
+	}
 }

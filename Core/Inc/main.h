@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#define RX_BUFFER_SIZE 32
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -96,145 +96,7 @@ void Error_Handler(void);
 #define IGN_BTN_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
-
-#define CAN_MSG_MAX_TIMEOUT 1000
-
-typedef enum {
-	AS_STATE_OFF = 1,       // 1
-	AS_STATE_READY = 2,     // 2
-	AS_STATE_DRIVING = 3,   // 3
-	AS_STATE_EMERGENCY = 4, // 4
-	AS_STATE_FINISHED = 5   // 5
-} AS_STATE_t;
-
-typedef enum {
-	MANUAL,       // 0
-	ACCELERATION, // 1
-	SKIDPAD,      // 2   // 3
-	TRACKDRIVE,   // 4
-	EBS_TEST,     // 5
-	INSPECTION,   // 6
-	AUTOCROSS     // 7
-} current_mission_t;
-
-
-typedef enum{
-	NONE,
-	SDC_OPEN,
-	RES,
-	Pressure_checks,
-	VCU_Timeout,
-	Jetson_timeout,
-	ACU_WDT_TRIGERED,
-	dir_actuator_timeout,
-	Dynamics_REAR_Pressure_timeout,
-	UNKOWN
-}Emergency_cause_t;
-
-
-typedef enum{
-	BLE_IDLE,
-	BLE_WAIT_CONFIG,
-	BLE_BRIDGE
-}BLE_STATE_MACHINE_t;
-
-struct pressure {
-	float Pneumatic;
-	float Hydraulic;
-};
-
-struct speed {
-	uint8_t Speed;			// Km/h
-	uint8_t Target_Speed;	// Km/h
-};
-
-struct car {
-	struct pressure Rear_Pressure;
-	struct pressure Front_Pressure;
-	uint8_t front_solenoid;
-	uint8_t rear_solenoid;
-	uint8_t Ignition_Status;			// 0 - OFF, 1 - ON     (Real from VCU)
-	uint8_t Ignition_Request;		// 0 - OFF, 1 - ON		(Request from ACU)
-	uint8_t Ignition_enable;
-	uint8_t ASMS;								// 0 - OFF, 1 - ON
-	uint8_t Emergency;							// 0 - No , 1 - Emergency
-	uint8_t Res;					// 0 - Not active, 1 - ON , 2 - Emergency
-	uint8_t HW_WDT_Enable;
-	uint8_t ignition_pin_state;
-	uint8_t prev_ign_pin_state;
-	uint8_t SDC_feedback;
-	uint8_t ASSI_state;
-	uint8_t vcu_sdc;
-	volatile AS_STATE_t Autonomous_State; 		// Autonomous system state
-	volatile current_mission_t Current_Mission; // Current mission state
-	volatile current_mission_t Jetson_mission;
-	struct speed Speed;
-	float chip_temp;
-	int rpm;
-	uint32_t VCU_LAST_TX,REAR_PRESSURE_LAST_TX,JETSON_LAST_TX,DIR_ACTUATOR_LAST_TX,RES_LAST_TX;
-};
-
-typedef enum {
-	Start, IDLE, AS_ON, EMERGENCY
-} Main_state_machine_t;
-
-
-typedef enum {
-	INIT,
-	MISSION_SELECT,
-	JETSON_WAITING,
-	INIT_SEQUENCE,
-	READY,
-	DRIVING,
-	EBS_ERROR,
-	ACU_EMERGENCY,
-	FINISHED,
-	ACU_MANUAL
-} cant_acu_state_t;
-
-
-typedef enum {
-	OFF,
-	Initial_Sequence,
-	Monitor_sequence,
-	AS_Emergency,
-	Finish
-
-}Autonomous_System_states_t;
-
-
-typedef enum {
-	NO_TIMEOUT,
-	VCU_TIMEOUT,
-	JETSON_TIMEOUT,
-	PRESSURE_TIMEOUT,
-	DIR_TIMEOUT,
-	RES_TIMEOUT
-}can_timeouts_t;
-
-
-typedef enum {
-	WDT_TOGGLE_CHECK,        // 0 — Check SDC open (LOW), disable WDT
-	WDT_STP_TOGGLE_CHECK,    // 1 — Wait for SDC closed (HIGH), enable WDT (5000ms timeout)
-	PNEUMATIC_CHECK,         // 2 — Check pneumatic: front EBS_MIN_BAR..EBS_MAX_BAR, rear EBS_REAR_MIN_BAR..EBS_MAX_BAR
-	PRESSURE_CHECK1,         // 3 — Hyd correlation pre-ignition (hyd >= EBS_*_HYD_GAIN x pneu, Autonomous_functions.c)
-	HV_ACTIVATION,           // 4 — Enable ignition, wait for confirmation
-	PRESSURE_CHECK_FRONT,    // 5 — front_solenoid=0, rear_solenoid=1, check Front correlated & Rear unloaded
-	PRESSURE_CHECK_REAR,     // 6 — front_solenoid=1, rear_solenoid=0, check Rear correlated & Front unloaded
-	PRESSURE_CHECK2,         // 7 — Both off, final correlation check -> READY
-	SEQUENCE_ERROR           // 8 — Error state -> EMERGENCY
-} startup_sequence_state_t;
-
-
-struct can_queue {
-	uint32_t TX_MAILBOX;
-	CAN_TxHeaderTypeDef can_tx_header;
-	CAN_RxHeaderTypeDef can_rx_header;
-	uint8_t tx_data[8];
-	uint32_t arrival_time;
-};
-
+/* Application types live in acu.h */
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

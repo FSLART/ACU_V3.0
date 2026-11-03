@@ -1,41 +1,15 @@
 /*
  * APP.h
  *
- *  Created on: Apr 25, 2026
- *      Author: bruno
+ * One control cycle of the ACU, in order. Called every 1 ms by the control task
+ * (acu_tasks.c) and by the host tests (tests/host).
  */
-
 #ifndef INC_APP_H_
 #define INC_APP_H_
 
-#include "main.h"
-#include "adc.h"
-#include "can.h"
-#include "dma.h"
-#include "i2c.h"
-#include "tim.h"
-#include "usart.h"
-#include "gpio.h"
-#include <stdio.h>
-#include "Autonomous_functions.h"
-#include "hardware_abstraction.h"
-#include "autonomous_t26.h"
-#include "rn4871.h"
-#include "ring_buffer.h"
-#include <stdint.h>
+#include "acu.h"
 
-
-
-extern Main_state_machine_t Vehicle_state_machine;
-extern Autonomous_System_states_t Autonomous_state;
-extern startup_sequence_state_t startup_sequence_state;
-
-
-void app_init();
-void app();
-void dbc_decode();
-void ble_module_config_start(void);
-void ble_module_config_tick(void);
-uint8_t ble_module_config_is_done(void);
+void app_init(uint32_t now_ms);
+void app_control_step(uint32_t now_ms);
 
 #endif /* INC_APP_H_ */

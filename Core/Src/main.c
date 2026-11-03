@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "adc.h"
 #include "can.h"
 #include "dma.h"
@@ -29,54 +30,24 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "APP.h"
-#include <stdio.h>
-#include <ctype.h>
-#include "Autonomous_functions.h"
-#include "hardware_abstraction.h"
-#include "autonomous_t26.h"
-#include "rn4871.h"
-#include "EMA_Filter.h"
-#include <stdio.h>
-#include "ee24.h"
-#include "ble_handler.h"
-#include "state_machine.h"
+#include "acu.h"
+#include "acu_system.h"
+#include "acu_tasks.h"
+#include "inputs.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
-uint32_t ADC_Samples[4];
-volatile uint8_t rx_buffer[RX_BUFFER_SIZE];
-volatile uint8_t uart_log_dump = 0;
-
-extern DMA_HandleTypeDef hdma_usart2_rx;
+uint32_t ADC_Samples[4]; /* DMA: rear tank, front tank, chip temperature, VREFINT */
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TS_CAL1_ADDR        ((uint16_t*)0x1FFF7A2C)   // Raw @ 30°C, Vdda=3.3V
-#define TS_CAL2_ADDR        ((uint16_t*)0x1FFF7A2E)   // Raw @ 110°C, Vdda=3.3V
-//#define VREFINT_CAL_ADDR    ((uint16_t*)0x1FFF7A2A)   // Raw Vref @ Vdda=3.3V
 
-#define TEMP_CAL1_TEMPC     30.0f
-#define TEMP_CAL2_TEMPC     110.0f
-
-uint16_t raw_vref;
-
-struct ring can_tx_ringbuffer;
-struct ring can_rx_ringbuffer;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-uint8_t tx_data[8];
-
-ema_data_structure ema_rear_pressure;
-ema_data_structure ema_front_pressure;
-
-extern uint8_t activate_res;
-
 
 /* USER CODE END PM */
 
@@ -84,19 +55,12 @@ extern uint8_t activate_res;
 
 /* USER CODE BEGIN PV */
 
-uint8_t mission_selector_enable = 0;
-EE24_HandleTypeDef hee24;
-
-CAN_TxHeaderTypeDef can_tx_header;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-
-float GetTemperature(uint16_t raw_temp, uint16_t raw_vref);
-static void IWDG_Start(void);
 
 /* USER CODE END PFP */
 
@@ -143,23 +107,22 @@ int main(void)
   MX_USART1_UART_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-	HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t*) rx_buffer, RX_BUFFER_SIZE);  /* will be overridden by ble_handler_init() */
-	uint32_t state = huart2.RxState;  // should be 0x22 (BUSY_RX)
-	uint32_t dma_ndtr = hdma_usart2_rx.Instance->NDTR;
-	ema_init(&ema_front_pressure, 0.5f);
-	ema_init(&ema_rear_pressure, 0.5f);
-	app_init();
-	IWDG_Start();
-
+	acu_hardware_start();
   /* USER CODE END 2 */
 
+  /* Call init function for freertos objects (in freertos.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		app();
 	}
   /* USER CODE END 3 */
 }
@@ -216,161 +179,29 @@ void SystemClock_Config(void)
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	if (hadc->Instance == ADC1) {
-		float raw_voltage_front = (ADC_Samples[1] * 3.3 / 4096) / 0.66;
-		float raw_voltage_rear = (ADC_Samples[0] * 3.3 / 4096) / 0.66;
-		t24.chip_temp = GetTemperature(ADC_Samples[2], ADC_Samples[3]);
-
-		float front_pressure = (raw_voltage_front - 0.5) / 0.4;
-		float rear_pressure = (raw_voltage_rear - 0.5) / 0.4;
-
-		t24.Front_Pressure.Pneumatic = ema_update(&ema_front_pressure, front_pressure);
-		t24.Rear_Pressure.Pneumatic = ema_update(&ema_rear_pressure, rear_pressure);
-
-	}
-}
-
-float GetTemperature(uint16_t raw_temp, uint16_t raw_vref) {
-	if (raw_vref == 0)
-		return 0.0f;
-
-// 1. Calcular VDDA real usando a calibração de fábrica do VREF (3.3V)
-// VDDA = 3.3V * (VREFINT_CAL / Raw_VREF)
-	float vdda = 3.3f * ((float) (*VREFINT_CAL_ADDR) / (float) raw_vref);
-
-// 2. Ajustar o valor lido da temperatura para a escala de 3.3V
-// (A calibração TS_CAL foi feita a 3.3V, se o teu VDDA for diferente, o valor "mexe")
-	float raw_equiv_3v3 = (float) raw_temp * (vdda / 3.3f);
-
-// 3. Interpolação Linear
-	float ts_cal1 = (float) (*TS_CAL1_ADDR);
-	float ts_cal2 = (float) (*TS_CAL2_ADDR);
-
-	float temperature = ((raw_equiv_3v3 - ts_cal1) * (TEMP_CAL2_TEMPC - TEMP_CAL1_TEMPC) / (ts_cal2 - ts_cal1))
-			+ TEMP_CAL1_TEMPC;
-
-	return temperature;
-}
-
-/***
- * tmr callback
- */
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if (htim->Instance == TIM2) {
-
-		/* One-shot command: goes first so the periodic frames can't take all 3 mailboxes, and is retried next tick if it still didn't fit */
-		if (activate_res){
-			can_tx_header.StdId = 0x00;
-			can_tx_header.RTR = CAN_RTR_DATA;
-			can_tx_header.DLC = 2;
-			tx_data[0] = 1;
-			tx_data[1] = 0;
-			if (CAN_Send(&hcan1, &can_tx_header, tx_data) == HAL_OK) {
-				activate_res = 0;
-			}
-		}
-
-		struct autonomous_t26_acu_t AS_data;
-
-		AS_data.acu_cpu_temp = t24.chip_temp;
-		AS_data.as_state = t24.Autonomous_State;
-		AS_data.asms = t24.ASMS;
-		AS_data.assi_state = t24.ASSI_state;
-		AS_data.emergency = t24.Emergency;
-		update_ignition_request();
-		AS_data.ign = t24.Ignition_Request;
-		AS_data.mission_select = t24.Current_Mission;
-		AS_data.acu_state = (uint8_t)Vehicle_state_machine;
-		AS_data.emergency_cause = Emergency_cause;
-
-		autonomous_t26_acu_pack(tx_data, &AS_data, AUTONOMOUS_T26_ACU_LENGTH);
-
-		can_tx_header.StdId = AUTONOMOUS_T26_ACU_FRAME_ID;
-		can_tx_header.RTR = CAN_RTR_DATA;
-		can_tx_header.DLC = AUTONOMOUS_T26_ACU_LENGTH;
-
-		CAN_Send(&hcan1, &can_tx_header, tx_data);
-
-		struct autonomous_t26_dv_status_t dv_data;
-
-		dv_data.as_status = t24.Autonomous_State;
-		dv_data.ami_state = t24.Jetson_mission;
-		//dv_data.asb_ebs_state
-
-		autonomous_t26_dv_status_pack(tx_data, &dv_data, AUTONOMOUS_T26_DV_STATUS_LENGTH);
-
-		can_tx_header.StdId = AUTONOMOUS_T26_DV_STATUS_FRAME_ID;
-		can_tx_header.RTR = CAN_RTR_DATA;
-		can_tx_header.DLC = AUTONOMOUS_T26_DV_STATUS_LENGTH;
-		CAN_Send(&hcan1, &can_tx_header, tx_data);
-
-		struct autonomous_t26_asf_signals_t asf_signals;
-		asf_signals.brake_pressure_front = t24.Front_Pressure.Hydraulic * 10;
-		asf_signals.brake_pressure_rear = t24.Rear_Pressure.Hydraulic * 10;
-		asf_signals.ebs_pressure_tank_front = t24.Front_Pressure.Pneumatic * 10;
-		asf_signals.ebs_pressure_tank_rear = t24.Rear_Pressure.Pneumatic * 10;
-		autonomous_t26_asf_signals_pack(tx_data, &asf_signals, AUTONOMOUS_T26_ASF_SIGNALS_LENGTH);
-		can_tx_header.StdId = AUTONOMOUS_T26_ASF_SIGNALS_FRAME_ID;
-		can_tx_header.RTR = CAN_RTR_DATA;
-		can_tx_header.DLC = AUTONOMOUS_T26_ASF_SIGNALS_LENGTH;
-
-		CAN_Send(&hcan1, &can_tx_header, tx_data);
+		float chip_temp_c = system_chip_temperature(ADC_Samples[2], ADC_Samples[3]);
+		inputs_on_adc_conversion(ADC_Samples[1], ADC_Samples[0], chip_temp_c);
 	}
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
-	CAN_RxHeaderTypeDef rx_header;
-	uint8_t rx_data[8];
+	CAN_RxHeaderTypeDef header;
+	can_frame_t frame = { 0 };
 
-	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data) != HAL_OK) {
+	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, frame.data) != HAL_OK) {
 		/* Drop it: a frame left in the FIFO re-fires this interrupt forever */
 		SET_BIT(hcan->Instance->RF0R, CAN_RF0R_RFOM0);
 		return;
 	}
-	/* ID and IDE are checked in dbc_decode() */
-	can_rx_buffer_push(&can_rx_ringbuffer, rx_header, rx_data);
-}
-
-/* Last safety net: ~2 s (LSI 32 kHz / 64 * 1000), refreshed only in app()'s 10 ms slot.
- * Register access because the HAL IWDG module is not enabled in this project. */
-static void IWDG_Start(void) {
-	__HAL_DBGMCU_FREEZE_IWDG();   /* don't reset the board while halted at a breakpoint */
-	IWDG->KR = 0xCCCC;            /* start, forces LSI on */
-	IWDG->KR = 0x5555;            /* unlock PR and RLR */
-	IWDG->PR = IWDG_PR_PR_2;      /* /64 */
-	IWDG->RLR = 1000;
-	uint32_t t0 = HAL_GetTick();
-	while (IWDG->SR != 0 && HAL_GetTick() - t0 < 10) {
-	}
-	IWDG->KR = 0xAAAA;            /* reload */
+	frame.extended = header.IDE == CAN_ID_EXT;
+	frame.id = frame.extended ? header.ExtId : header.StdId;
+	frame.length = (uint8_t)header.DLC;
+	acu_tasks_can_frame_from_isr(&frame);
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (GPIO_Pin == MS_BTN_Pin && mission_selector_enable == 1) {
-		t24.Current_Mission++;
-		if (t24.Current_Mission > AUTOCROSS) {
-			t24.Current_Mission = MANUAL;
-		}
-	}
-}
-
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
-	if (huart->Instance == USART1) {
-		char cmd[RX_BUFFER_SIZE] = { 0 };
-
-		uint8_t j = 0;
-
-		for (uint8_t i = 0; i < Size && j < RX_BUFFER_SIZE - 1; i++) {
-			char c = (char) rx_buffer[i];
-			if (c == '\r' || c == '\n' || c == ' ')
-				continue;
-			cmd[j++] = tolower(c);
-		}
-
-		if (strcmp(cmd, "log") == 0)
-			uart_log_dump = 1;
-		if (strcmp(cmd, "resume") == 0)
-			uart_log_dump = 0;
+	if (GPIO_Pin == MS_BTN_Pin) {
+		inputs_on_mission_button(HAL_GetTick());
 	}
 }
 
@@ -384,9 +215,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
 	/* User can add his own implementation to report the HAL error return state */
-	__disable_irq();
-	while (1) {
-	}
+	system_halt_safe();
   /* USER CODE END Error_Handler_Debug */
 }
 
