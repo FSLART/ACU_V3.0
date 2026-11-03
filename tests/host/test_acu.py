@@ -536,6 +536,20 @@ class TestMonitoring(AcuTest):
         self.w.run(5000)
         self.assertFalse(self.w.state.fault_active)
 
+    @unittest.skipUnless(BYPASS_JETSON, "BYPASS_JETSON_TIMEOUT = 0")
+    def test_stale_driving_request_from_a_silent_jetson_is_ignored(self):
+        self.restart()
+        self.w.start_checkup()
+        self.w.run_until(lambda w: w.state.checkup_step == "CHECKUP_TS_ACTIVATION", 5000)
+        self.w.jetson("DRIVING")
+        self.w.run(100)
+        self.w.plant.jetson_alive = 0
+        self.w.press_ign()
+        self.assertTrue(self.w.run_until(lambda w: w.state.as_state == "AS_STATE_READY", 15000), self.w.log())
+        self.w.run(6000)
+        self.assertEqual(self.w.state.as_state, "AS_STATE_READY")
+        self.assertFalse(self.w.state.fault_active)
+
     @unittest.skipIf(BYPASS_JETSON, "BYPASS_JETSON_TIMEOUT = 1")
     def test_silent_jetson_is_an_emergency(self):
         self.ok(self.w.start_to_ready())

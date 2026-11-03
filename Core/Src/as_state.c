@@ -69,7 +69,10 @@ static void handle_jetson_request(uint32_t now_ms) {
 	bool ready = acu.as.state == AS_STATE_READY;
 	bool driving = acu.as.state == AS_STATE_DRIVING;
 
-	if (acu.fault.active || !(ready || driving)) {
+	/* A request from a Jetson that went silent is stale, also with BYPASS_JETSON_TIMEOUT. */
+	bool jetson_alive = acu.nodes.jetson.rx_count > 0 && acu.nodes.jetson.age_ms <= JETSON_TIMEOUT_MS;
+
+	if (acu.fault.active || !jetson_alive || !(ready || driving)) {
 		return;
 	}
 	switch (acu.jetson.as_state) {
